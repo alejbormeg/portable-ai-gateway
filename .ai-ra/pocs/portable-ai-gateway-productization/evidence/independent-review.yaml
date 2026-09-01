@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+schema_version: "1.0"
+artifact_id: "portable-ai-gateway-productization"
+status: "inconclusive"
+reviewed_on: "2026-09-01"
+reviewer_role: "independent-ai-ra-alignment-reviewer"
+source_commit: null
+image_digest: null
+details: "independent-review.md"

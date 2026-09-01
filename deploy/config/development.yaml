@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+api_version: gateway.portable-ai.dev/v1alpha1
+kind: GatewayConfiguration
+metadata:
+  version: development-mock-v1
+spec:
+  tenants:
+    - id: default
+      name: Local development
+      sensitive: false
+  providers:
+    - id: mock
+      tenant_id: default
+      kind: mock
+      residency: local
+      native_responses: true
+  models:
+    - id: mock-chat
+      tenant_id: default
+      upstream_model: mock-chat
+      capabilities:
+        chat: true
+        responses: true
+        streaming: true
+        tools: false
+        structured_output: false
+        multimodal: false
+  routes:
+    - id: default-mock
+      tenant_id: default
+      model_id: mock-chat
+      targets:
+        - provider_id: mock
+          upstream_model: mock-chat
+          residency: local
+          priority: 10
+          capabilities:
+            chat: true
+            responses: true
+            streaming: true
+            tools: false
+            structured_output: false
+            multimodal: false
+  policies:
+    - id: default-policy
+      tenant_id: default
+      max_input_chars: 32768
+      denied_parameters: []
+  quotas:
+    - id: default-quota
+      tenant_id: default
+      requests_per_minute: 600
+      concurrent_requests: 100

@@ -1,0 +1,15 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "documentComment": "SPDX-License-Identifier: AGPL-3.0-only; synthetic structural test fixture, not a release SBOM",
+  "name": "portable-ai-gateway-synthetic-airgap-fixture",
+  "documentNamespace": "https://portable-ai.invalid/spdx/synthetic-airgap-fixture",
+  "creationInfo": {
+    "created": "2026-09-01T00:00:00Z",
+    "creators": [
+      "Tool: portable-ai-gateway-test-fixture"
+    ]
+  },
+  "packages": []
+}

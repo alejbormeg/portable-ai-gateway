@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Optional disconnected-network override for a customer-operated model server.
+services:
+  data-plane:
+    environment:
+      PAG_PROVIDER_HOST_ALLOWLIST: ${PAG_BYO_PROVIDER_HOST:-model-server.example.internal}
+      PAG_PROVIDER_CREDENTIAL_BYO: ${PAG_PROVIDER_CREDENTIAL_BYO:-}
+    volumes:
+      - ../config/on-prem.yaml:/etc/portable-ai-gateway/config.yaml:ro
+    networks:
+      - backend
+      - provider-egress
+  control-plane:
+    environment:
+      PAG_PROVIDER_HOST_ALLOWLIST: ${PAG_BYO_PROVIDER_HOST:-model-server.example.internal}
+    volumes:
+      - ../config/on-prem.yaml:/etc/portable-ai-gateway/config.yaml:ro
+
+networks:
+  provider-egress: {}

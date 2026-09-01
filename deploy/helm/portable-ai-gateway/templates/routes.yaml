@@ -1,0 +1,58 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+{{- if and .Values.dataPlane.enabled .Values.routes.dataPlane.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-data-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-plane
+  {{- with .Values.routes.dataPlane.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.routes.dataPlane.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "portable-ai-gateway.fullname" . }}-data-plane
+    weight: 100
+  port:
+    targetPort: http
+  {{- if .Values.routes.dataPlane.tls.enabled }}
+  tls:
+    termination: {{ .Values.routes.dataPlane.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.routes.dataPlane.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+---
+{{- end }}
+{{- if and .Values.controlPlane.enabled .Values.routes.controlPlane.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-control-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+  {{- with .Values.routes.controlPlane.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.routes.controlPlane.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "portable-ai-gateway.fullname" . }}-control-plane
+    weight: 100
+  port:
+    targetPort: http
+  {{- if .Values.routes.controlPlane.tls.enabled }}
+  tls:
+    termination: {{ .Values.routes.controlPlane.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.routes.controlPlane.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}

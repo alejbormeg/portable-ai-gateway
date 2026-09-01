@@ -1,0 +1,32 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+{{- if and .Values.dataPlane.enabled .Values.dataPlane.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-data-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-plane
+spec:
+  minAvailable: {{ .Values.dataPlane.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "portable-ai-gateway.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: data-plane
+---
+{{- end }}
+{{- if and .Values.controlPlane.enabled .Values.controlPlane.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-control-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  minAvailable: {{ .Values.controlPlane.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "portable-ai-gateway.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+{{- end }}

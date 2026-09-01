@@ -1,0 +1,217 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+schema_version: "1.0"
+id: "portable-ai-gateway-productization"
+title: "Portable, customer-owned AI Gateway product baseline"
+status: "inconclusive"
+planned_on: "2026-09-01"
+executed_on: "2026-09-01"
+
+hypothesis: >-
+  With deterministic synthetic traffic and the same immutable gateway image,
+  the product preserves all mandatory API, authentication, tenant-isolation,
+  routing, audit and offline behaviors across the declared deployment profiles;
+  in the local reference environment it sustains 50 completed requests per
+  second and 100 simultaneous streams while adding no more than 50 ms p95
+  latency versus a direct deterministic mock-provider baseline.
+
+refutation: >-
+  The hypothesis is refuted if any reproducible mandatory functional or
+  negative-security scenario fails, tenant/content/credential data appears in
+  an unauthorized response or evidence sink, a deployment requires a
+  vendor-hosted licensing/control service, AGPL and commercial builds differ,
+  fallback occurs after the first streamed byte or violates residency, the
+  accepted local benchmark misses any stated load/latency threshold, or one
+  immutable digest cannot pass the required platform and offline gates.
+
+baseline: >-
+  A deterministic synthetic HTTP mock provider invoked directly on the same
+  host and network path, with the identical payload corpus, concurrency,
+  connection reuse, warm-up and measurement window as the gateway variant.
+
+variant: >-
+  Client to Portable AI Gateway data plane to the same deterministic mock,
+  with PostgreSQL and Valkey enabled, metadata-only audit active, and a
+  versioned synthetic GatewayConfiguration applied.
+
+traceability:
+  - requirement: "PAG-REQ-001"
+    evidence: "offline execution, source-link and no-phone-home scenarios"
+  - requirement: "PAG-REQ-002"
+    evidence: "identical-source and identical-artifact comparison"
+  - requirement: "PAG-REQ-003"
+    evidence: "Compose, Cloud Run, Kubernetes, OpenShift and air-gap gates"
+  - requirement: "PAG-REQ-004"
+    evidence: "provider switch and extension conformance scenarios"
+  - requirement: "PAG-REQ-005"
+    evidence: "OIDC/key, negative tenant and content-canary scenarios"
+
+metrics:
+  - name: "mandatory_functional_conformance"
+    threshold: "100%"
+    observed: "135/135 local Python tests passed with SQLite/in-memory stores, mocked providers and synthetic release/bundle fixtures; the required real-service and platform matrix was not executed"
+  - name: "negative_auth_and_tenant_isolation"
+    threshold: "100% pass; 0 cross-tenant disclosures"
+    observed: "Local negative scope, sensitive-tenant, cross-tenant, key-lifecycle and tenant-recreation scenarios passed; production IdP and adversarial platform tests were not executed"
+  - name: "prohibited_content_or_secret_events"
+    threshold: "0 across responses, logs, audits, traces and support bundle"
+    observed: "Unit-level audit/access-log canaries and source secret-pattern checks passed; a complete scan of runtime logs, traces and support bundles was not executed"
+  - name: "provider_switch_without_core_change"
+    threshold: "mock, generic OpenAI-compatible and Vertex selected by configuration only"
+    observed: "Mock, generic OpenAI-compatible and Vertex adapters are selected by configuration/factory; generic and Vertex used mocked transports/credentials only"
+  - name: "fallback_safety"
+    threshold: "100% before-first-byte only; 0 residency/capability violations"
+    observed: "Local regular and streaming pre-first-byte fallback, shared monotonic deadline, ownership-bound lease renewal and per-target capability/residency scenarios passed; real provider, Valkey and platform-residency tests remain open"
+  - name: "local_completed_request_rate"
+    threshold: ">= 50 requests/second with >= 99% successful synthetic requests in each accepted repetition"
+    observed: null
+  - name: "simultaneous_streams"
+    threshold: ">= 100 active streams with >= 99% successful completion in each accepted repetition"
+    observed: null
+  - name: "gateway_added_latency"
+    threshold: "paired p95 <= 50 ms in each accepted repetition"
+    observed: null
+  - name: "cross_platform_artifact_identity"
+    threshold: "one immutable image digest passes Compose, Cloud Run, Kubernetes and OpenShift restricted gates"
+    observed: "Compose and Helm/OpenShift manifests passed offline static resolution/lint only; no image digest was built or deployed"
+  - name: "offline_vendor_dependency"
+    threshold: "0 outbound/vendor licensing or control-plane calls during air-gapped install and run"
+    observed: "A relocatable three-image bundle create/checksum/standalone-structure/Compose-resolution smoke passed without network; no runtime air-gap install ran, and source inspection found no licensor dependency"
+  - name: "license_feature_parity"
+    threshold: "one source tree and one image digest; 0 license-conditioned code paths"
+    observed: "One source tree and no license-conditioned runtime path; no release image exists for artifact comparison"
+  - name: "reproducible_build"
+    threshold: "at least two clean builds from pinned source produce identical amd64 and arm64 platform manifest digests"
+    observed: "The signed evidence contract and negative validator tests exist; no candidate or second clean build was executed"
+  - name: "synthetic_cost_and_budget"
+    threshold: "approved maximum; 0 budget violations"
+    observed: "No cost experiment was executed; external cost incurred was EUR 0"
+
+load:
+  corpus: "deterministic synthetic chat, streaming, tool and error fixtures"
+  warmup: "required and excluded from measurements"
+  measured_repetitions: 3
+  request_rate_target: "50 completed requests/second"
+  concurrent_stream_target: 100
+  gateway_overhead_target: "paired p95 <= 50 ms"
+  availability_target_excluded: >-
+    99.9% is a future design objective without an approved SLO window or error
+    budget and is not evaluated by this PoC.
+
+data:
+  classification: "synthetic"
+  personal_data: false
+  corporate_data: false
+  prompts_or_responses_retained: false
+  simulated_provider: true
+  deterministic_seed_required: true
+
+environment:
+  selected: "docker-local"
+  rationale: >-
+    Docker local represents the provider abstraction, API contract, identity
+    negatives, routing, storage, audit, offline behavior and gateway overhead
+    without credentials, external resources or cloud cost. It is the mandatory
+    first gate. It cannot demonstrate Cloud Run identity, OpenShift security
+    constraints, managed-service behavior, production network latency or cost;
+    those remain separate gated executions using the same digest.
+
+platform_comparison:
+  docker_local:
+    hard_constraints: "No credentials or external data; local container engine and pre-approved images/dependencies required."
+    security_and_residency: "Host boundary only; egress can be denied, but no enterprise cluster policy is represented."
+    cost_and_latency: "No external spend; best environment for paired gateway-overhead measurement."
+    gpu_and_services: "No GPU required; local PostgreSQL, Valkey and deterministic mock."
+    portability_and_operations: "High for core container contracts; does not prove managed-platform operations."
+  openshift_on_premise:
+    hard_constraints: "Requires approved cluster, namespace, image transfer and security/network policies."
+    security_and_residency: "Validates restricted execution, service accounts, network policy and local residency."
+    cost_and_latency: "Internal capacity/cost model required; cluster topology affects latency."
+    gpu_and_services: "Gateway needs no GPU; customer supplies model endpoint and data services."
+    portability_and_operations: "Required later gate for Helm, non-root, read-only and air-gap claims."
+  aws:
+    hard_constraints: "Not an initial deployment target; credentials, region, network and budget would require approval."
+    security_and_residency: "Must verify selected region/services and workload identity before any future test."
+    cost_and_latency: "Variable managed-service and egress cost; not estimated in this PoC."
+    gpu_and_services: "Gateway needs no GPU; equivalent managed dependencies could be selected later."
+    portability_and_operations: "Comparison only; no AWS operability claim in v0.1.0-alpha."
+  azure:
+    hard_constraints: "Not an initial deployment target; credentials, region, network and budget would require approval."
+    security_and_residency: "Must verify selected region/services and workload identity before any future test."
+    cost_and_latency: "Variable managed-service and egress cost; not estimated in this PoC."
+    gpu_and_services: "Gateway needs no GPU; equivalent managed dependencies could be selected later."
+    portability_and_operations: "Comparison only; no Azure operability claim in v0.1.0-alpha."
+  gcp:
+    hard_constraints: "Requires explicit approval for credentials, project/region, Terraform apply and budget. Existing resources are out of scope."
+    security_and_residency: "Required later gate for Cloud Run identity, Vertex region, Cloud SQL and managed cache controls."
+    cost_and_latency: "Billable and region-dependent; estimate and maximum budget must be approved before apply."
+    gpu_and_services: "Gateway needs no GPU; Vertex and managed data services are optional external dependencies."
+    portability_and_operations: "Required later gate for the documented GCP profile; local success is not a substitute."
+
+abandonment_criteria:
+  - "Any credential, prompt, response, tool payload or cross-tenant data appears in an unauthorized response or evidence sink."
+  - "Any unapproved download, credential use, external resource change, deployment or external cost would be required."
+  - "A mandatory scenario fails reproducibly after the fixture and environment have been verified."
+  - "The benchmark misses a load or latency threshold in an accepted repetition after environmental invalidity is excluded."
+  - "AGPL and commercial use would require different artifacts or a technical license control."
+  - "A tested fallback crosses capability/residency policy or begins after streamed output."
+
+decision_rules:
+  supported: >-
+    Every mandatory metric meets its threshold, all three local repetitions are
+    valid, one immutable digest passes every required platform and offline
+    gate, cost remains within each pre-approved budget, and independent review
+    finds no unsupported product claim.
+  rejected: >-
+    A threshold miss or prohibited behavior is reproducible under a valid
+    fixture/environment and is attributable to the product rather than an
+    external transient, permission problem or invalid run.
+  inconclusive: >-
+    Missing approval, credentials, platform access, artifact, cost evidence,
+    valid repetitions or independent review prevents a required metric from
+    being evaluated without demonstrating product failure. Local-only success
+    is inconclusive for the full cross-platform hypothesis.
+
+threats_to_validity:
+  - "A deterministic mock does not represent provider latency, quotas, semantic drift or proprietary streaming behavior."
+  - "Local Docker does not represent Cloud Run identity, managed-service failure modes or OpenShift security policy."
+  - "Synthetic OIDC tokens do not demonstrate interoperability with a production identity provider."
+  - "A single host can bias paired latency through scheduling, cache warmth and container-network effects."
+  - "Generated Terraform/Helm assets do not prove a successful or secure deployment."
+  - "Dependency and base-image changes can invalidate reproducibility and license conclusions."
+  - "The load target is a reference-environment threshold, not capacity guidance for customer hardware."
+
+out_of_scope:
+  - "Real prompts, responses, tools, identities or customer data"
+  - "Bundled on-prem model serving or GPU evaluation"
+  - "AWS or Azure deployment certification"
+  - "Model quality, safety, bias or regulatory suitability"
+  - "Multi-region failover and a 99.9% availability claim"
+  - "Commercial pricing validation or a production support SLA"
+
+approvals:
+  - item: "Use only deterministic synthetic data and mock provider"
+    status: "executed-for-local-python-tests"
+  - item: "Download Python dependencies or container images"
+    status: "not-requested-not-approved"
+  - item: "Run the local Docker experiment"
+    status: "not-executed"
+  - item: "Use any cloud/cluster credentials or non-synthetic data"
+    status: "not-requested-not-approved"
+  - item: "Create/change/deploy external resources or incur cost"
+    status: "not-requested-not-approved"
+  - item: "Publish source, image, chart or bundle"
+    status: "blocked-by-legal-and-evidence-gates"
+
+budget:
+  current_local_phase_external_maximum_eur: 0
+  external_cost_incurred_eur: 0
+  future_gcp_maximum_eur: null
+  rule: "Define and approve a maximum before any cloud plan/apply or paid inference."
+
+evidence:
+  results: "results.md"
+  traceability: "traceability.md"
+  cost_report: "cost-report.md"
+  cleanup_plan: "cleanup-plan.md"
+  raw_evidence: "evidence/local-validation.md"
+  independent_alignment_review: "evidence/independent-review.md"

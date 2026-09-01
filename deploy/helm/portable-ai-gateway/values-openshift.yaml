@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# OpenShift restricted-v2 compatible: no fixed UID/GID or SCC is requested.
+
+podSecurityContext:
+  runAsNonRoot: true
+  # Null lets restricted-v2 inject namespace-allocated values.
+  fsGroup: null
+  fsGroupChangePolicy: null
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+
+routes:
+  dataPlane:
+    enabled: true
+    host: ""
+    annotations: {}
+    tls:
+      enabled: true
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  controlPlane:
+    enabled: false
+    host: ""
+    annotations: {}
+    tls:
+      enabled: true
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect

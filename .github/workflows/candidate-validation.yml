@@ -1,0 +1,750 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Candidate validation and acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Release candidate workflow run ID
+        required: true
+        type: string
+      candidate_commit:
+        description: Exact 40-character source commit built by that run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+  CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+
+concurrency:
+  group: candidate-validation-${{ inputs.candidate_commit }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-candidate:
+    name: Verify candidate identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    outputs:
+      artifact_digest: ${{ steps.verify.outputs.artifact_digest }}
+      candidate_manifest_sha256: ${{ steps.verify.outputs.candidate_manifest_sha256 }}
+      image_index_digest: ${{ steps.verify.outputs.image_index_digest }}
+      image_repository: ${{ steps.verify.outputs.image_repository }}
+      source_tree: ${{ steps.verify.outputs.source_tree }}
+      version: ${{ steps.verify.outputs.version }}
+    steps:
+      - name: Validate dispatch inputs and main ancestry
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$CANDIDATE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+      - name: Check out exact candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          fetch-depth: 0
+      - name: Require candidate commit on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" refs/remotes/origin/main
+      - name: Verify candidate workflow run and artifact receipt
+        id: artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-candidate.yml" > /tmp/candidate-workflow.json
+          workflow_id="$(jq -er '.id' /tmp/candidate-workflow.json)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > /tmp/candidate-run.json
+          jq -e \
+            --arg commit "$CANDIDATE_COMMIT" \
+            --argjson workflow_id "$workflow_id" \
+            '.event == "workflow_dispatch"
+             and .conclusion == "success"
+             and .head_branch == "main"
+             and .head_sha == $commit
+             and .workflow_id == $workflow_id' \
+            /tmp/candidate-run.json >/dev/null
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            > /tmp/candidate-artifacts-pages.json
+          jq -s '{artifacts: map(.artifacts) | add}' \
+            /tmp/candidate-artifacts-pages.json > /tmp/candidate-artifacts.json
+          name="release-candidate-$CANDIDATE_COMMIT"
+          count="$(jq --arg name "$name" '[.artifacts[] | select(.name == $name and .expired == false)] | length' /tmp/candidate-artifacts.json)"
+          [[ "$count" == "1" ]]
+          digest="$(jq -er --arg name "$name" '.artifacts[] | select(.name == $name and .expired == false) | .digest' /tmp/candidate-artifacts.json)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Download exact candidate inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate-${{ inputs.candidate_commit }}
+          path: candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+      - name: Verify signed candidate manifest and files
+        id: verify
+        env:
+          CANDIDATE_ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
+        run: |
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml@refs/heads/main"
+          cosign verify-blob \
+            --bundle candidate/candidate.sigstore.json \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            candidate/candidate.json
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commit "$CANDIDATE_COMMIT" \
+            --arg run_id "$CANDIDATE_RUN_ID" \
+            '.schema_version == "portable-ai-gateway.dev/release-candidate/v1"
+             and .status == "candidate"
+             and .repository == $repository
+             and .source.commit == $commit
+             and .builder.run_id == $run_id
+             and (.image.index_digest | test("^sha256:[0-9a-f]{64}$"))
+             and ([.image.platforms[].architecture] | sort == ["amd64", "arm64"])
+             and (.airgap_dependencies.postgres.reference | test("@sha256:[0-9a-f]{64}$"))
+             and .airgap_dependencies.postgres.architecture == "amd64"
+             and (.airgap_dependencies.valkey.reference | test("@sha256:[0-9a-f]{64}$"))
+             and .airgap_dependencies.valkey.architecture == "amd64"' \
+            candidate/candidate.json >/dev/null
+          for artifact in \
+            image_index image_archive image_archive_signature sbom sbom_arm64 source chart \
+            postgres_manifest postgres_image_archive postgres_image_archive_signature postgres_sbom \
+            valkey_manifest valkey_image_archive valkey_image_archive_signature valkey_sbom; do
+            path="$(jq -er --arg artifact "$artifact" '.artifacts[$artifact].path' candidate/candidate.json)"
+            expected="$(jq -er --arg artifact "$artifact" '.artifacts[$artifact].sha256' candidate/candidate.json)"
+            [[ "$path" != /* && "$path" != *..* && "$expected" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$(sha256sum "candidate/$path" | cut -d ' ' -f 1)" == "$expected" ]]
+          done
+          index_digest="$(jq -er '.image.index_digest' candidate/candidate.json)"
+          [[ "sha256:$(sha256sum candidate/image-index.json | cut -d ' ' -f 1)" == "$index_digest" ]]
+          archive="$(jq -er '.artifacts.image_archive.path' candidate/candidate.json)"
+          archive_signature="$(jq -er '.artifacts.image_archive_signature.path' candidate/candidate.json)"
+          cosign verify-blob \
+            --bundle "candidate/$archive_signature" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "candidate/$archive"
+          for dependency in postgres valkey; do
+            dependency_archive="$(jq -er --arg artifact "${dependency}_image_archive" '.artifacts[$artifact].path' candidate/candidate.json)"
+            dependency_signature="$(jq -er --arg artifact "${dependency}_image_archive_signature" '.artifacts[$artifact].path' candidate/candidate.json)"
+            cosign verify-blob \
+              --bundle "candidate/$dependency_signature" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "candidate/$dependency_archive"
+          done
+          {
+            echo "artifact_digest=$CANDIDATE_ARTIFACT_DIGEST"
+            echo "candidate_manifest_sha256=$(sha256sum candidate/candidate.json | cut -d ' ' -f 1)"
+            echo "image_index_digest=$index_digest"
+            echo "image_repository=$(jq -er '.image.repository' candidate/candidate.json)"
+            echo "source_tree=$(jq -er '.source.tree' candidate/candidate.json)"
+            echo "version=$(jq -er '.version' candidate/candidate.json)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Log in to GHCR read-only
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify immutable registry content and candidate signatures
+        run: |
+          image_ref="${{ steps.verify.outputs.image_repository }}@${{ steps.verify.outputs.image_index_digest }}"
+          docker buildx imagetools inspect --raw "$image_ref" > /tmp/current-index.json
+          [[ "sha256:$(sha256sum /tmp/current-index.json | cut -d ' ' -f 1)" == "${{ steps.verify.outputs.image_index_digest }}" ]]
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml@refs/heads/main"
+          cosign verify \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$image_ref" >/dev/null
+          for architecture in amd64 arm64; do
+            platform_digest="$(jq -er --arg architecture "$architecture" '.image.platforms[] | select(.architecture == $architecture) | .digest' candidate/candidate.json)"
+            cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${{ steps.verify.outputs.image_repository }}@$platform_digest" >/dev/null
+            cosign verify-attestation \
+              --type spdxjson \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${{ steps.verify.outputs.image_repository }}@$platform_digest" >/dev/null
+          done
+
+  validate-matrix:
+    name: Validate ${{ matrix.target }} externally
+    needs: resolve-candidate
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - compose
+          - kubernetes
+          - openshift
+          - gcp
+          - airgap
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - pag-${{ matrix.target }}
+    timeout-minutes: 120
+    environment:
+      name: candidate-${{ matrix.target }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+    steps:
+      - name: Check out exact candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.candidate_commit }}
+      - name: Download exact candidate inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate-${{ inputs.candidate_commit }}
+          path: candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GHCR read-only
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run the protected external validation harness
+        id: harness
+        env:
+          EXPECTED_HARNESS_SHA256: ${{ vars.PAG_VALIDATION_HARNESS_SHA256 }}
+          EXPECTED_HARNESS_SOURCE_SHA256: ${{ vars.PAG_VALIDATION_HARNESS_SOURCE_SHA256 }}
+        run: |
+          harness=/opt/portable-ai-gateway-validation/run
+          harness_source=/opt/portable-ai-gateway-validation/source.tar.gz
+          [[ -x "$harness" ]]
+          [[ -s "$harness_source" ]]
+          [[ "$EXPECTED_HARNESS_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_HARNESS_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          harness_sha256="$(sha256sum "$harness" | cut -d ' ' -f 1)"
+          harness_source_sha256="$(sha256sum "$harness_source" | cut -d ' ' -f 1)"
+          [[ "$harness_sha256" == "$EXPECTED_HARNESS_SHA256" ]]
+          [[ "$harness_source_sha256" == "$EXPECTED_HARNESS_SOURCE_SHA256" ]]
+          echo "sha256=$harness_sha256" >> "$GITHUB_OUTPUT"
+          mkdir -p validation/raw
+          "$harness" \
+            --contract portable-ai-gateway.dev/release-validation/v2 \
+            --target "${{ matrix.target }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-commit "$CANDIDATE_COMMIT" \
+            --image "${{ needs.resolve-candidate.outputs.image_repository }}@${{ needs.resolve-candidate.outputs.image_index_digest }}" \
+            --chart "candidate/chart/portable-ai-gateway-${{ needs.resolve-candidate.outputs.version }}.tgz" \
+            --image-archive candidate/portable-ai-gateway-amd64.docker.tar \
+            --image-archive-signature candidate/portable-ai-gateway-amd64.candidate.sigstore.json \
+            --sbom candidate/portable-ai-gateway-amd64.spdx.json \
+            --sbom-arm64 candidate/portable-ai-gateway-arm64.spdx.json \
+            --dependency-image "postgres|$(jq -er '.airgap_dependencies.postgres.reference' candidate/candidate.json)|candidate/postgres-amd64.docker.tar" \
+            --dependency-sbom "postgres|candidate/postgres-amd64.spdx.json" \
+            --dependency-signature "postgres|candidate/postgres-amd64.candidate.sigstore.json" \
+            --dependency-image "valkey|$(jq -er '.airgap_dependencies.valkey.reference' candidate/candidate.json)|candidate/valkey-amd64.docker.tar" \
+            --dependency-sbom "valkey|candidate/valkey-amd64.spdx.json" \
+            --dependency-signature "valkey|candidate/valkey-amd64.candidate.sigstore.json" \
+            --source-archive candidate/portable-ai-gateway-source.tar.gz \
+            --candidate-artifact-digest "${{ needs.resolve-candidate.outputs.artifact_digest }}" \
+            --candidate candidate/candidate.json \
+            --output validation
+          mkdir -p validation/raw/harness
+          cp -- "$harness" validation/raw/harness/run
+          cp -- "$harness_source" validation/raw/harness/source.tar.gz
+          [[ "$(sha256sum validation/raw/harness/run | cut -d ' ' -f 1)" == "$harness_sha256" ]]
+          [[ "$(sha256sum validation/raw/harness/source.tar.gz | cut -d ' ' -f 1)" == "$harness_source_sha256" ]]
+          jq \
+            --arg executable_sha256 "$harness_sha256" \
+            --arg source_sha256 "$harness_source_sha256" \
+            '.harness.executable_artifact = {
+               path: "raw/harness/run",
+               sha256: $executable_sha256
+             }
+             | .harness.source_archive = {
+               path: "raw/harness/source.tar.gz",
+               sha256: $source_sha256
+             }' \
+            validation/result.json > validation/result.with-harness.json
+          mv -- validation/result.with-harness.json validation/result.json
+      - name: Enforce validation evidence contract
+        run: |
+          scripts/validate-release-evidence.sh \
+            --result validation/result.json \
+            --candidate candidate/candidate.json \
+            --target "${{ matrix.target }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-commit "$CANDIDATE_COMMIT" \
+            --image-index-digest "${{ needs.resolve-candidate.outputs.image_index_digest }}" \
+            --candidate-manifest-sha256 "${{ needs.resolve-candidate.outputs.candidate_manifest_sha256 }}" \
+            --candidate-artifact-digest "${{ needs.resolve-candidate.outputs.artifact_digest }}" \
+            --harness-sha256 "${{ steps.harness.outputs.sha256 }}"
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+      - name: Sign and checksum executed evidence
+        run: |
+          cosign sign-blob --yes \
+            --bundle validation/result.sigstore.json \
+            validation/result.json
+          (
+            cd validation
+            find . -type f ! -name files.sha256 -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > files.sha256
+          )
+      - name: Upload target evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: validation-${{ matrix.target }}-${{ inputs.candidate_commit }}
+          path: validation
+          if-no-files-found: error
+          retention-days: 90
+
+  independent-review:
+    name: Independently approve the immutable candidate evidence
+    needs:
+      - resolve-candidate
+      - validate-matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: candidate-independent-review
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    outputs:
+      artifact_digest: ${{ steps.artifact.outputs.artifact-digest }}
+      review_sha256: ${{ steps.review.outputs.sha256 }}
+    steps:
+      - name: Check out exact candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.candidate_commit }}
+      - name: Verify the independent human-review protection policy
+        id: review-policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p review
+          gh api "repos/$GITHUB_REPOSITORY/environments/candidate-independent-review" \
+            > review/environment-policy.json
+          jq -e \
+            '.name == "candidate-independent-review"
+             and .deployment_branch_policy.protected_branches == true
+             and any(.protection_rules[];
+               .type == "required_reviewers"
+               and .prevent_self_review == true
+               and (.reviewers | length) > 0)' \
+            review/environment-policy.json >/dev/null
+          required_reviewer_count="$(jq -er \
+            '[.protection_rules[]
+              | select(.type == "required_reviewers" and .prevent_self_review == true)
+              | .reviewers[]] | length' \
+            review/environment-policy.json)"
+          ((required_reviewer_count > 0))
+          decision_comment='PAG-INDEPENDENT-REVIEW: SUPPORTED; critical=0; high=0; non_evaluable=0'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            > review/approval-history.json
+          reviewer_logins="$(jq -c \
+            --arg environment "candidate-independent-review" \
+            --arg initiator "$GITHUB_ACTOR" \
+            --arg triggering_actor "$GITHUB_TRIGGERING_ACTOR" \
+            --arg decision_comment "$decision_comment" \
+            '[.[]
+              | select(.state == "approved")
+              | select(any(.environments[]?; .name == $environment))
+              | select(.user.login != $initiator and .user.login != $triggering_actor)
+              | select(.comment == $decision_comment)
+              | .user.login] | unique' \
+            review/approval-history.json)"
+          [[ "$(jq 'length' <<< "$reviewer_logins")" -gt 0 ]]
+          {
+            echo "sha256=$(sha256sum review/environment-policy.json | cut -d ' ' -f 1)"
+            echo "required_reviewer_count=$required_reviewer_count"
+            echo "approval_history_sha256=$(sha256sum review/approval-history.json | cut -d ' ' -f 1)"
+            echo "reviewer_logins=$reviewer_logins"
+          } >> "$GITHUB_OUTPUT"
+      - name: Download candidate inputs for review
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate-${{ inputs.candidate_commit }}
+          path: review-input/candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download executed evidence for review
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: validation-*-${{ inputs.candidate_commit }}
+          path: review-input/evidence
+          merge-multiple: false
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+      - name: Reverify evidence presented to the independent reviewers
+        run: |
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/candidate-validation.yml@refs/heads/main"
+          candidate=review-input/candidate/candidate.json
+          candidate_manifest_sha="$(sha256sum "$candidate" | cut -d ' ' -f 1)"
+          [[ "$candidate_manifest_sha" == "${{ needs.resolve-candidate.outputs.candidate_manifest_sha256 }}" ]]
+          for target in compose kubernetes openshift gcp airgap; do
+            directory="review-input/evidence/validation-${target}-${CANDIDATE_COMMIT}"
+            [[ -d "$directory" ]]
+            (cd "$directory" && sha256sum --strict --check files.sha256)
+            cosign verify-blob \
+              --bundle "$directory/result.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$directory/result.json" >/dev/null
+            scripts/validate-release-evidence.sh \
+              --result "$directory/result.json" \
+              --candidate "$candidate" \
+              --target "$target" \
+              --repository "$GITHUB_REPOSITORY" \
+              --source-commit "$CANDIDATE_COMMIT" \
+              --image-index-digest "${{ needs.resolve-candidate.outputs.image_index_digest }}" \
+              --candidate-manifest-sha256 "$candidate_manifest_sha" \
+              --candidate-artifact-digest "${{ needs.resolve-candidate.outputs.artifact_digest }}"
+          done
+      - name: Create and sign the independent review record
+        id: review
+        run: |
+          mkdir -p review
+          evidence='[]'
+          for target in compose kubernetes openshift gcp airgap; do
+            result="review-input/evidence/validation-${target}-${CANDIDATE_COMMIT}/result.json"
+            evidence="$(jq -c \
+              --arg target "$target" \
+              --arg sha256 "$(sha256sum "$result" | cut -d ' ' -f 1)" \
+              '. + [{target: $target, result_sha256: $sha256}]' \
+              <<< "$evidence")"
+          done
+          jq -n \
+            --arg schema_version "portable-ai-gateway.dev/independent-review/v1" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_commit "$CANDIDATE_COMMIT" \
+            --arg source_tree "${{ needs.resolve-candidate.outputs.source_tree }}" \
+            --arg image_index_digest "${{ needs.resolve-candidate.outputs.image_index_digest }}" \
+            --arg candidate_manifest_sha256 "${{ needs.resolve-candidate.outputs.candidate_manifest_sha256 }}" \
+            --arg candidate_artifact_digest "${{ needs.resolve-candidate.outputs.artifact_digest }}" \
+            --arg validation_run_id "$GITHUB_RUN_ID" \
+            --arg validation_workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg validation_workflow_sha "$GITHUB_SHA" \
+            --arg review_environment "candidate-independent-review" \
+            --arg review_policy_sha256 "${{ steps.review-policy.outputs.sha256 }}" \
+            --arg required_reviewer_count "${{ steps.review-policy.outputs.required_reviewer_count }}" \
+            --arg approval_history_sha256 "${{ steps.review-policy.outputs.approval_history_sha256 }}" \
+            --arg decision_comment "PAG-INDEPENDENT-REVIEW: SUPPORTED; critical=0; high=0; non_evaluable=0" \
+            --arg workflow_initiator "$GITHUB_ACTOR" \
+            --arg workflow_triggering_actor "$GITHUB_TRIGGERING_ACTOR" \
+            --argjson reviewer_logins '${{ steps.review-policy.outputs.reviewer_logins }}' \
+            --argjson evidence "$evidence" \
+            '{
+              schema_version: $schema_version,
+              status: "supported",
+              repository: $repository,
+              source: {commit: $source_commit, tree: $source_tree},
+              image_index_digest: $image_index_digest,
+              candidate: {
+                manifest_sha256: $candidate_manifest_sha256,
+                artifact_digest: $candidate_artifact_digest
+              },
+              reviewed_evidence: $evidence,
+              review_control: {
+                environment: $review_environment,
+                mechanism: "protected-environment-required-reviewers",
+                decision: "approved-after-evidence-review",
+                validation_run_id: $validation_run_id,
+                workflow_ref: $validation_workflow_ref,
+                workflow_sha: $validation_workflow_sha,
+                workflow_initiator: $workflow_initiator,
+                workflow_triggering_actor: $workflow_triggering_actor,
+                environment_policy: {
+                  path: "environment-policy.json",
+                  sha256: $review_policy_sha256,
+                  required_reviewer_count: ($required_reviewer_count | tonumber),
+                  prevent_self_review: true,
+                  protected_branches_only: true
+                },
+                approval_history: {
+                  path: "approval-history.json",
+                  sha256: $approval_history_sha256,
+                  reviewers: $reviewer_logins,
+                  decision_comment: $decision_comment
+                }
+              },
+              findings: {critical: 0, high: 0, non_evaluable: 0},
+              limitations: [
+                "legal approval is a separate release gate",
+                "alpha status does not imply production readiness or an SLA"
+              ]
+            }' > review/independent-review.json
+          cosign sign-blob --yes \
+            --bundle review/independent-review.sigstore.json \
+            review/independent-review.json
+          echo "sha256=$(sha256sum review/independent-review.json | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Upload immutable independent review
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: independent-review-${{ inputs.candidate_commit }}
+          path: review
+          if-no-files-found: error
+          retention-days: 90
+
+  accept-candidate:
+    name: Create protected immutable acceptance dossier
+    needs:
+      - resolve-candidate
+      - validate-matrix
+      - independent-review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: candidate-acceptance
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.candidate_commit }}
+      - name: Download candidate inputs into the dossier
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate-${{ inputs.candidate_commit }}
+          path: accepted/candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all executed matrix evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: validation-*-${{ inputs.candidate_commit }}
+          path: accepted/evidence
+          merge-multiple: false
+      - name: Download the independent review record
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: independent-review-${{ inputs.candidate_commit }}
+          path: accepted/review
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+      - name: Reverify matrix evidence and build its immutable index
+        run: |
+          mkdir -p accepted/receipt
+          evidence='[]'
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/candidate-validation.yml@refs/heads/main"
+          for target in compose kubernetes openshift gcp airgap; do
+            directory="accepted/evidence/validation-${target}-${CANDIDATE_COMMIT}"
+            [[ -d "$directory" ]]
+            (cd "$directory" && sha256sum --check files.sha256)
+            cosign verify-blob \
+              --bundle "$directory/result.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$directory/result.json"
+            scripts/validate-release-evidence.sh \
+              --result "$directory/result.json" \
+              --candidate accepted/candidate/candidate.json \
+              --target "$target" \
+              --repository "$GITHUB_REPOSITORY" \
+              --source-commit "$CANDIDATE_COMMIT" \
+              --image-index-digest "${{ needs.resolve-candidate.outputs.image_index_digest }}" \
+              --candidate-manifest-sha256 "${{ needs.resolve-candidate.outputs.candidate_manifest_sha256 }}" \
+              --candidate-artifact-digest "${{ needs.resolve-candidate.outputs.artifact_digest }}"
+            result_sha="$(sha256sum "$directory/result.json" | cut -d ' ' -f 1)"
+            evidence="$(jq -c \
+              --arg target "$target" \
+              --arg result_path "evidence/validation-${target}-${CANDIDATE_COMMIT}/result.json" \
+              --arg result_sha256 "$result_sha" \
+              '. + [{target: $target, status: "supported", result_path: $result_path, result_sha256: $result_sha256}]' \
+              <<< "$evidence")"
+          done
+          printf '%s\n' "$evidence" | jq . > accepted/receipt/evidence-index.json
+          (
+            cd accepted
+            find candidate evidence review -type f -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > receipt/evidence.sha256
+          )
+      - name: Verify the digest-bound independent review
+        run: |
+          record=accepted/review/independent-review.json
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/candidate-validation.yml@refs/heads/main"
+          [[ "$(sha256sum "$record" | cut -d ' ' -f 1)" == "${{ needs.independent-review.outputs.review_sha256 }}" ]]
+          cosign verify-blob \
+            --bundle accepted/review/independent-review.sigstore.json \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$record" >/dev/null
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_commit "$CANDIDATE_COMMIT" \
+            --arg source_tree "${{ needs.resolve-candidate.outputs.source_tree }}" \
+            --arg image_index_digest "${{ needs.resolve-candidate.outputs.image_index_digest }}" \
+            --arg candidate_manifest_sha256 "${{ needs.resolve-candidate.outputs.candidate_manifest_sha256 }}" \
+            --arg candidate_artifact_digest "${{ needs.resolve-candidate.outputs.artifact_digest }}" \
+            --arg validation_run_id "$GITHUB_RUN_ID" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg workflow_sha "$GITHUB_SHA" \
+            '.schema_version == "portable-ai-gateway.dev/independent-review/v1"
+             and .status == "supported"
+             and .repository == $repository
+             and .source.commit == $source_commit
+             and .source.tree == $source_tree
+             and .image_index_digest == $image_index_digest
+             and .candidate.manifest_sha256 == $candidate_manifest_sha256
+             and .candidate.artifact_digest == $candidate_artifact_digest
+             and .review_control.environment == "candidate-independent-review"
+             and .review_control.mechanism == "protected-environment-required-reviewers"
+             and .review_control.decision == "approved-after-evidence-review"
+             and .review_control.validation_run_id == $validation_run_id
+             and .review_control.workflow_ref == $workflow_ref
+             and .review_control.workflow_sha == $workflow_sha
+             and .review_control.environment_policy.path == "environment-policy.json"
+             and (.review_control.environment_policy.sha256 | test("^[0-9a-f]{64}$"))
+             and .review_control.environment_policy.required_reviewer_count > 0
+             and .review_control.environment_policy.prevent_self_review == true
+             and .review_control.environment_policy.protected_branches_only == true
+             and (.review_control.workflow_initiator | type == "string" and length > 0)
+             and (.review_control.workflow_triggering_actor | type == "string" and length > 0)
+             and .review_control.approval_history.path == "approval-history.json"
+             and (.review_control.approval_history.sha256 | test("^[0-9a-f]{64}$"))
+             and (.review_control.approval_history.reviewers | type == "array" and length > 0)
+             and .review_control.approval_history.decision_comment == "PAG-INDEPENDENT-REVIEW: SUPPORTED; critical=0; high=0; non_evaluable=0"
+             and .findings == {critical: 0, high: 0, non_evaluable: 0}
+             and ([.reviewed_evidence[].target] == ["compose", "kubernetes", "openshift", "gcp", "airgap"])' \
+            "$record" >/dev/null
+          policy=accepted/review/environment-policy.json
+          [[ "$(sha256sum "$policy" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.review_control.environment_policy.sha256' "$record")" ]]
+          jq -e \
+            '.name == "candidate-independent-review"
+             and .deployment_branch_policy.protected_branches == true
+             and any(.protection_rules[];
+               .type == "required_reviewers"
+               and .prevent_self_review == true
+               and (.reviewers | length) > 0)' \
+            "$policy" >/dev/null
+          approval_history=accepted/review/approval-history.json
+          [[ "$(sha256sum "$approval_history" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.review_control.approval_history.sha256' "$record")" ]]
+          review_initiator="$(jq -er '.review_control.workflow_initiator' "$record")"
+          review_triggering_actor="$(jq -er '.review_control.workflow_triggering_actor' "$record")"
+          reviewer_logins="$(jq -c '.review_control.approval_history.reviewers' "$record")"
+          jq -e \
+            --arg environment "candidate-independent-review" \
+            --arg initiator "$review_initiator" \
+            --arg triggering_actor "$review_triggering_actor" \
+            --arg decision_comment "PAG-INDEPENDENT-REVIEW: SUPPORTED; critical=0; high=0; non_evaluable=0" \
+            --argjson expected_reviewers "$reviewer_logins" \
+            '([.[]
+              | select(.state == "approved")
+              | select(any(.environments[]?; .name == $environment))
+              | select(.user.login != $initiator and .user.login != $triggering_actor)
+              | select(.comment == $decision_comment)
+              | .user.login] | unique) as $actual
+             | ($actual | length) > 0 and $actual == $expected_reviewers' \
+            "$approval_history" >/dev/null
+      - name: Create and sign the accepted dossier
+        id: dossier
+        env:
+          EVIDENCE_ARTIFACT_DIGEST: ${{ needs.resolve-candidate.outputs.artifact_digest }}
+        run: |
+          jq -n \
+            --arg schema_version "portable-ai-gateway.dev/release-dossier/v1" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_commit "$CANDIDATE_COMMIT" \
+            --arg source_tree "${{ needs.resolve-candidate.outputs.source_tree }}" \
+            --arg version "${{ needs.resolve-candidate.outputs.version }}" \
+            --arg image_repository "${{ needs.resolve-candidate.outputs.image_repository }}" \
+            --arg image_index_digest "${{ needs.resolve-candidate.outputs.image_index_digest }}" \
+            --arg candidate_run_id "$CANDIDATE_RUN_ID" \
+            --arg candidate_artifact_digest "$EVIDENCE_ARTIFACT_DIGEST" \
+            --arg candidate_manifest_sha256 "${{ needs.resolve-candidate.outputs.candidate_manifest_sha256 }}" \
+            --arg validation_run_id "$GITHUB_RUN_ID" \
+            --arg validation_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg workflow_sha "$GITHUB_SHA" \
+            --arg evidence_index_sha256 "$(sha256sum accepted/receipt/evidence-index.json | cut -d ' ' -f 1)" \
+            --arg evidence_manifest_sha256 "$(sha256sum accepted/receipt/evidence.sha256 | cut -d ' ' -f 1)" \
+            --arg independent_review_sha256 "${{ needs.independent-review.outputs.review_sha256 }}" \
+            --arg independent_review_artifact_digest "${{ needs.independent-review.outputs.artifact_digest }}" \
+            --argjson evidence "$(cat accepted/receipt/evidence-index.json)" \
+            '{
+              schema_version: $schema_version,
+              status: "supported",
+              repository: $repository,
+              source: {commit: $source_commit, tree: $source_tree},
+              version: $version,
+              image: {repository: $image_repository, index_digest: $image_index_digest},
+              candidate: {
+                run_id: $candidate_run_id,
+                artifact_digest: $candidate_artifact_digest,
+                manifest_sha256: $candidate_manifest_sha256
+              },
+              independent_review: {
+                status: "supported",
+                record_path: "review/independent-review.json",
+                signature_path: "review/independent-review.sigstore.json",
+                record_sha256: $independent_review_sha256,
+                artifact_digest: $independent_review_artifact_digest,
+                environment: "candidate-independent-review"
+              },
+              validation: {
+                run_id: $validation_run_id,
+                run_attempt: $validation_run_attempt,
+                workflow_ref: $workflow_ref,
+                workflow_sha: $workflow_sha,
+                required_targets: ["compose", "kubernetes", "openshift", "gcp", "airgap"],
+                evidence: $evidence,
+                evidence_index_sha256: $evidence_index_sha256,
+                evidence_manifest_sha256: $evidence_manifest_sha256
+              }
+            }' > accepted/receipt/dossier.json
+          cosign sign-blob --yes \
+            --bundle accepted/receipt/dossier.sigstore.json \
+            accepted/receipt/dossier.json
+          echo "sha256=sha256:$(sha256sum accepted/receipt/dossier.json | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Upload immutable accepted dossier
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: accepted-release-${{ inputs.candidate_commit }}
+          path: accepted
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish annotated-tag receipt
+        run: |
+          {
+            echo '### Candidate accepted by the protected matrix'
+            echo
+            echo 'Create an annotated tag only after all remaining legal/architecture gates pass. Include these exact trailers:'
+            echo '```text'
+            echo "Release-Source-Commit: $CANDIDATE_COMMIT"
+            echo "Release-Image-Digest: ${{ needs.resolve-candidate.outputs.image_index_digest }}"
+            echo "Release-Candidate-Run: $CANDIDATE_RUN_ID"
+            echo "Release-Dossier-Run: $GITHUB_RUN_ID"
+            echo "Release-Dossier-SHA256: ${{ steps.dossier.outputs.sha256 }}"
+            echo "Release-Dossier-Artifact-Digest: ${{ steps.artifact.outputs.artifact-digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

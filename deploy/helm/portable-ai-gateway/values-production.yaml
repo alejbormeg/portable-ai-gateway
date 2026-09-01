@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Supply customer-specific OIDC values and an immutable digest in a separate,
+# non-committed values file. The schema deliberately rejects this profile alone.
+
+gateway:
+  appEnvironment: production
+  allowAnonymousDevelopment: false
+  gitOpsMode: true
+
+existingSecret:
+  name: portable-ai-gateway-runtime
+  databaseUrlKey: database-url
+  cacheUrlKey: cache-url
+  apiKeyPepperKey: api-key-pepper
+  oidcHs256SecretKey: oidc-hs256-secret
+  oidcJwksJsonKey: oidc-jwks-json
+  optionalKeys: false
+  # Exactly one of the HS256 and JWKS keys is required by the application.
+  optionalOidcKeys: true
+
+dataPlane:
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+controlPlane:
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1

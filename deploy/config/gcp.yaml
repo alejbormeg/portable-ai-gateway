@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Terraform renders an equivalent project-specific document. Replace all
+# placeholders when using this static example directly.
+api_version: gateway.portable-ai.dev/v1alpha1
+kind: GatewayConfiguration
+metadata:
+  version: gcp-vertex-v1
+spec:
+  tenants:
+    - id: default
+      name: GCP evaluation
+      sensitive: false
+  providers:
+    - id: vertex
+      tenant_id: default
+      kind: vertex
+      project: YOUR_GCP_PROJECT
+      location: europe-west1
+      residency: eu
+      native_responses: false
+  models:
+    - id: vertex-chat
+      tenant_id: default
+      upstream_model: REPLACE_WITH_VERTEX_MODEL
+      capabilities:
+        chat: true
+        responses: false
+        streaming: true
+        tools: false
+        structured_output: false
+        multimodal: false
+  routes:
+    - id: vertex-route
+      tenant_id: default
+      model_id: vertex-chat
+      required_residency: eu
+      targets:
+        - provider_id: vertex
+          upstream_model: REPLACE_WITH_VERTEX_MODEL
+          residency: eu
+          priority: 10
+          capabilities:
+            chat: true
+            responses: false
+            streaming: true
+            tools: false
+            structured_output: false
+            multimodal: false
+  policies:
+    - id: default-policy
+      tenant_id: default
+      max_input_chars: 32768
+      denied_parameters: []
+  quotas:
+    - id: default-quota
+      tenant_id: default
+      requests_per_minute: 120
+      concurrent_requests: 20

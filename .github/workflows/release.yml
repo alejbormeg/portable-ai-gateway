@@ -1,0 +1,902 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Release accepted candidate
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify dossier and promote accepted bytes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment:
+      name: release
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - name: Check out the annotated release tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the tag-to-dossier binding
+        id: release
+        shell: bash
+        run: |
+          [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" == "tag" ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          source_commit="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          git merge-base --is-ancestor "$source_commit" refs/remotes/origin/main
+
+          git for-each-ref --format='%(contents:body)' \
+            "refs/tags/$GITHUB_REF_NAME" > /tmp/release-tag-message.txt
+          git interpret-trailers --parse < /tmp/release-tag-message.txt \
+            > /tmp/release-tag-trailers.txt
+
+          read_trailer() {
+            local key="$1"
+            local -a values=()
+            mapfile -t values < <(
+              awk -F ': ' -v key="$key" \
+                '$1 == key {sub(/^[^:]+:[[:space:]]*/, ""); print}' \
+                /tmp/release-tag-trailers.txt
+            )
+            ((${#values[@]} == 1)) || {
+              printf 'error: annotated tag requires exactly one %s trailer\n' "$key" >&2
+              return 1
+            }
+            [[ -n "${values[0]}" ]] || return 1
+            printf '%s' "${values[0]}"
+          }
+
+          image_digest="$(read_trailer Release-Image-Digest)"
+          trailer_commit="$(read_trailer Release-Source-Commit)"
+          candidate_run_id="$(read_trailer Release-Candidate-Run)"
+          dossier_run_id="$(read_trailer Release-Dossier-Run)"
+          dossier_sha256="$(read_trailer Release-Dossier-SHA256)"
+          dossier_artifact_digest="$(read_trailer Release-Dossier-Artifact-Digest)"
+
+          [[ "$trailer_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$source_commit" == "$trailer_commit" ]]
+          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$candidate_run_id" =~ ^[0-9]+$ ]]
+          [[ "$dossier_run_id" =~ ^[0-9]+$ ]]
+          [[ "$dossier_sha256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$dossier_artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          unknown_release_trailer="$(
+            awk -F ': ' \
+              '$1 ~ /^Release-/ && $1 != "Release-Image-Digest" && $1 != "Release-Source-Commit" &&
+               $1 != "Release-Candidate-Run" && $1 != "Release-Dossier-Run" &&
+               $1 != "Release-Dossier-SHA256" && $1 != "Release-Dossier-Artifact-Digest" {print}' \
+              /tmp/release-tag-trailers.txt
+          )"
+          [[ -z "$unknown_release_trailer" ]]
+
+          version="${GITHUB_REF_NAME#v}"
+          [[ "v$version" == "$GITHUB_REF_NAME" ]]
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          repository="${GITHUB_REPOSITORY,,}"
+          image="ghcr.io/$repository"
+          source_tree="$(git rev-parse "$source_commit^{tree}")"
+          {
+            echo "version=$version"
+            echo "image=$image"
+            echo "owner=${GITHUB_REPOSITORY_OWNER,,}"
+            echo "source_commit=$source_commit"
+            echo "source_tree=$source_tree"
+            echo "image_digest=$image_digest"
+            echo "candidate_run_id=$candidate_run_id"
+            echo "dossier_run_id=$dossier_run_id"
+            echo "dossier_sha256=$dossier_sha256"
+            echo "dossier_artifact_digest=$dossier_artifact_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Enforce final legal, evidence and source gates
+        env:
+          LEGAL_RELEASE_APPROVED: ${{ vars.LEGAL_RELEASE_APPROVED }}
+        run: |
+          scripts/check-release-gates.sh \
+            --phase release \
+            --version "${{ steps.release.outputs.version }}" \
+            --legal-approved "$LEGAL_RELEASE_APPROVED"
+
+      - name: Verify the accepted-dossier workflow receipt
+        id: accepted-artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOSSIER_ARTIFACT_DIGEST: ${{ steps.release.outputs.dossier_artifact_digest }}
+          DOSSIER_RUN_ID: ${{ steps.release.outputs.dossier_run_id }}
+          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/candidate-validation.yml" \
+            > /tmp/validation-workflow.json
+          workflow_id="$(jq -er '.id' /tmp/validation-workflow.json)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$DOSSIER_RUN_ID" \
+            > /tmp/validation-run.json
+          jq -e \
+            --argjson workflow_id "$workflow_id" \
+            '.event == "workflow_dispatch"
+             and .conclusion == "success"
+             and .head_branch == "main"
+             and .workflow_id == $workflow_id' \
+            /tmp/validation-run.json >/dev/null
+          validation_head_sha="$(jq -er '.head_sha' /tmp/validation-run.json)"
+          [[ "$validation_head_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$DOSSIER_RUN_ID/artifacts?per_page=100" \
+            > /tmp/accepted-artifacts-pages.json
+          jq -s '{artifacts: map(.artifacts) | add}' \
+            /tmp/accepted-artifacts-pages.json > /tmp/accepted-artifacts.json
+          name="accepted-release-$SOURCE_COMMIT"
+          count="$(jq --arg name "$name" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+            /tmp/accepted-artifacts.json)"
+          [[ "$count" == "1" ]]
+          actual_digest="$(jq -er --arg name "$name" \
+            '.artifacts[] | select(.name == $name and .expired == false) | .digest' \
+            /tmp/accepted-artifacts.json)"
+          [[ "$actual_digest" == "$DOSSIER_ARTIFACT_DIGEST" ]]
+          echo "validation_head_sha=$validation_head_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact immutable acceptance dossier
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: accepted-release-${{ steps.release.outputs.source_commit }}
+          path: accepted
+          run-id: ${{ steps.release.outputs.dossier_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+
+      - name: Verify the signed dossier and every accepted evidence record
+        id: dossier
+        env:
+          CANDIDATE_RUN_ID: ${{ steps.release.outputs.candidate_run_id }}
+          DOSSIER_RUN_ID: ${{ steps.release.outputs.dossier_run_id }}
+          DOSSIER_SHA256: ${{ steps.release.outputs.dossier_sha256 }}
+          IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
+          IMAGE_REPOSITORY: ${{ steps.release.outputs.image }}
+          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
+          SOURCE_TREE: ${{ steps.release.outputs.source_tree }}
+          VALIDATION_HEAD_SHA: ${{ steps.accepted-artifact.outputs.validation_head_sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          dossier=accepted/receipt/dossier.json
+          [[ "sha256:$(sha256sum "$dossier" | cut -d ' ' -f 1)" == "$DOSSIER_SHA256" ]]
+          validation_identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/candidate-validation.yml@refs/heads/main"
+          candidate_identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml@refs/heads/main"
+          cosign verify-blob \
+            --bundle accepted/receipt/dossier.sigstore.json \
+            --certificate-identity "$validation_identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$dossier" >/dev/null
+
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_commit "$SOURCE_COMMIT" \
+            --arg source_tree "$SOURCE_TREE" \
+            --arg version "$VERSION" \
+            --arg image_repository "$IMAGE_REPOSITORY" \
+            --arg image_digest "$IMAGE_DIGEST" \
+            --arg candidate_run_id "$CANDIDATE_RUN_ID" \
+            --arg dossier_run_id "$DOSSIER_RUN_ID" \
+            --arg workflow_ref "$GITHUB_REPOSITORY/.github/workflows/candidate-validation.yml@refs/heads/main" \
+            --arg workflow_sha "$VALIDATION_HEAD_SHA" \
+            '.schema_version == "portable-ai-gateway.dev/release-dossier/v1"
+             and .status == "supported"
+             and .repository == $repository
+             and .source.commit == $source_commit
+             and .source.tree == $source_tree
+             and .version == $version
+             and .image.repository == $image_repository
+             and .image.index_digest == $image_digest
+             and .candidate.run_id == $candidate_run_id
+             and .independent_review.status == "supported"
+             and .independent_review.record_path == "review/independent-review.json"
+             and .independent_review.signature_path == "review/independent-review.sigstore.json"
+             and (.independent_review.record_sha256 | test("^[0-9a-f]{64}$"))
+             and (.independent_review.artifact_digest | test("^sha256:[0-9a-f]{64}$"))
+             and .independent_review.environment == "candidate-independent-review"
+             and .validation.run_id == $dossier_run_id
+             and .validation.workflow_ref == $workflow_ref
+             and .validation.workflow_sha == $workflow_sha
+             and .validation.required_targets == ["compose", "kubernetes", "openshift", "gcp", "airgap"]' \
+            "$dossier" >/dev/null
+
+          evidence_index=accepted/receipt/evidence-index.json
+          evidence_manifest=accepted/receipt/evidence.sha256
+          [[ "$(sha256sum "$evidence_index" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.validation.evidence_index_sha256' "$dossier")" ]]
+          [[ "$(sha256sum "$evidence_manifest" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.validation.evidence_manifest_sha256' "$dossier")" ]]
+          jq -e --slurpfile indexed "$evidence_index" \
+            '.validation.evidence == $indexed[0]' "$dossier" >/dev/null
+          if grep -Ev '^[0-9a-f]{64}  (candidate|evidence|review)/[A-Za-z0-9._/-]+$' \
+            "$evidence_manifest" | grep -q .; then
+            printf '%s\n' 'error: evidence checksum manifest contains an unsafe entry' >&2
+            exit 1
+          fi
+          ! grep -Eq '(^|/)\.\.(/|$)' "$evidence_manifest"
+          (cd accepted && sha256sum --strict --check receipt/evidence.sha256)
+
+          review_path="$(jq -er '.independent_review.record_path' "$dossier")"
+          review_signature_path="$(jq -er '.independent_review.signature_path' "$dossier")"
+          [[ "$review_path" == "review/independent-review.json" ]]
+          [[ "$review_signature_path" == "review/independent-review.sigstore.json" ]]
+          review="accepted/$review_path"
+          review_signature="accepted/$review_signature_path"
+          review_sha256="$(sha256sum "$review" | cut -d ' ' -f 1)"
+          [[ "$review_sha256" == "$(jq -er '.independent_review.record_sha256' "$dossier")" ]]
+          cosign verify-blob \
+            --bundle "$review_signature" \
+            --certificate-identity "$validation_identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$review" >/dev/null
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_commit "$SOURCE_COMMIT" \
+            --arg source_tree "$SOURCE_TREE" \
+            --arg image_digest "$IMAGE_DIGEST" \
+            --arg candidate_manifest_sha256 "$(jq -er '.candidate.manifest_sha256' "$dossier")" \
+            --arg candidate_artifact_digest "$(jq -er '.candidate.artifact_digest' "$dossier")" \
+            --arg validation_run_id "$DOSSIER_RUN_ID" \
+            --arg workflow_ref "$GITHUB_REPOSITORY/.github/workflows/candidate-validation.yml@refs/heads/main" \
+            --arg workflow_sha "$VALIDATION_HEAD_SHA" \
+            '.schema_version == "portable-ai-gateway.dev/independent-review/v1"
+             and .status == "supported"
+             and .repository == $repository
+             and .source.commit == $source_commit
+             and .source.tree == $source_tree
+             and .image_index_digest == $image_digest
+             and .candidate.manifest_sha256 == $candidate_manifest_sha256
+             and .candidate.artifact_digest == $candidate_artifact_digest
+             and .review_control.environment == "candidate-independent-review"
+             and .review_control.mechanism == "protected-environment-required-reviewers"
+             and .review_control.decision == "approved-after-evidence-review"
+             and .review_control.validation_run_id == $validation_run_id
+             and .review_control.workflow_ref == $workflow_ref
+             and .review_control.workflow_sha == $workflow_sha
+             and .review_control.environment_policy.path == "environment-policy.json"
+             and (.review_control.environment_policy.sha256 | test("^[0-9a-f]{64}$"))
+             and .review_control.environment_policy.required_reviewer_count > 0
+             and .review_control.environment_policy.prevent_self_review == true
+             and .review_control.environment_policy.protected_branches_only == true
+             and (.review_control.workflow_initiator | type == "string" and length > 0)
+             and (.review_control.workflow_triggering_actor | type == "string" and length > 0)
+             and .review_control.approval_history.path == "approval-history.json"
+             and (.review_control.approval_history.sha256 | test("^[0-9a-f]{64}$"))
+             and (.review_control.approval_history.reviewers | type == "array" and length > 0)
+             and .review_control.approval_history.decision_comment == "PAG-INDEPENDENT-REVIEW: SUPPORTED; critical=0; high=0; non_evaluable=0"
+             and .findings == {critical: 0, high: 0, non_evaluable: 0}' \
+            "$review" >/dev/null
+          review_policy=accepted/review/environment-policy.json
+          [[ "$(sha256sum "$review_policy" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.review_control.environment_policy.sha256' "$review")" ]]
+          jq -e \
+            '.name == "candidate-independent-review"
+             and .deployment_branch_policy.protected_branches == true
+             and any(.protection_rules[];
+               .type == "required_reviewers"
+               and .prevent_self_review == true
+               and (.reviewers | length) > 0)' \
+            "$review_policy" >/dev/null
+          approval_history=accepted/review/approval-history.json
+          [[ "$(sha256sum "$approval_history" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.review_control.approval_history.sha256' "$review")" ]]
+          review_initiator="$(jq -er '.review_control.workflow_initiator' "$review")"
+          review_triggering_actor="$(jq -er '.review_control.workflow_triggering_actor' "$review")"
+          reviewer_logins="$(jq -c '.review_control.approval_history.reviewers' "$review")"
+          jq -e \
+            --arg environment "candidate-independent-review" \
+            --arg initiator "$review_initiator" \
+            --arg triggering_actor "$review_triggering_actor" \
+            --arg decision_comment "PAG-INDEPENDENT-REVIEW: SUPPORTED; critical=0; high=0; non_evaluable=0" \
+            --argjson expected_reviewers "$reviewer_logins" \
+            '([.[]
+              | select(.state == "approved")
+              | select(any(.environments[]?; .name == $environment))
+              | select(.user.login != $initiator and .user.login != $triggering_actor)
+              | select(.comment == $decision_comment)
+              | .user.login] | unique) as $actual
+             | ($actual | length) > 0 and $actual == $expected_reviewers' \
+            "$approval_history" >/dev/null
+          jq -e --slurpfile indexed "$evidence_index" \
+            '[.reviewed_evidence[] | {target, result_sha256}]
+             == [$indexed[0][] | {target, result_sha256}]' \
+            "$review" >/dev/null
+
+          review_artifact_name="independent-review-$SOURCE_COMMIT"
+          review_artifact_count="$(jq --arg name "$review_artifact_name" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+            /tmp/accepted-artifacts.json)"
+          [[ "$review_artifact_count" == "1" ]]
+          review_artifact_digest="$(jq -er --arg name "$review_artifact_name" \
+            '.artifacts[] | select(.name == $name and .expired == false) | .digest' \
+            /tmp/accepted-artifacts.json)"
+          [[ "$review_artifact_digest" == "$(jq -er '.independent_review.artifact_digest' "$dossier")" ]]
+
+          candidate=accepted/candidate/candidate.json
+          [[ "$(sha256sum "$candidate" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.candidate.manifest_sha256' "$dossier")" ]]
+          cosign verify-blob \
+            --bundle accepted/candidate/candidate.sigstore.json \
+            --certificate-identity "$candidate_identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$candidate" >/dev/null
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_commit "$SOURCE_COMMIT" \
+            --arg source_tree "$SOURCE_TREE" \
+            --arg version "$VERSION" \
+            --arg image_repository "$IMAGE_REPOSITORY" \
+            --arg image_digest "$IMAGE_DIGEST" \
+            --arg candidate_run_id "$CANDIDATE_RUN_ID" \
+            --arg workflow_ref "$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml@refs/heads/main" \
+            '.schema_version == "portable-ai-gateway.dev/release-candidate/v1"
+             and .status == "candidate"
+             and .repository == $repository
+             and .source.commit == $source_commit
+             and .source.tree == $source_tree
+             and .version == $version
+             and .image.repository == $image_repository
+             and .image.index_digest == $image_digest
+             and .builder.run_id == $candidate_run_id
+             and .builder.workflow_ref == $workflow_ref
+             and ([.image.platforms[] | select(.os == "linux") | .architecture] | sort) == ["amd64", "arm64"]
+             and ([.image.platforms[].digest] | all(test("^sha256:[0-9a-f]{64}$")))
+             and .artifacts.image_index.path == "image-index.json"
+             and .artifacts.image_archive.path == "portable-ai-gateway-amd64.docker.tar"
+             and .artifacts.image_archive_signature.path == "portable-ai-gateway-amd64.candidate.sigstore.json"
+             and .artifacts.sbom.path == "portable-ai-gateway-amd64.spdx.json"
+             and .artifacts.sbom_arm64.path == "portable-ai-gateway-arm64.spdx.json"
+             and .artifacts.postgres_image_archive.path == "postgres-amd64.docker.tar"
+             and .artifacts.postgres_sbom.path == "postgres-amd64.spdx.json"
+             and .artifacts.valkey_image_archive.path == "valkey-amd64.docker.tar"
+             and .artifacts.valkey_sbom.path == "valkey-amd64.spdx.json"
+             and .artifacts.source.path == "portable-ai-gateway-source.tar.gz"
+             and .artifacts.chart.path == ("chart/portable-ai-gateway-" + $version + ".tgz")' \
+            "$candidate" >/dev/null
+          for artifact in \
+            image_index image_archive image_archive_signature sbom sbom_arm64 source chart \
+            postgres_manifest postgres_image_archive postgres_image_archive_signature postgres_sbom \
+            valkey_manifest valkey_image_archive valkey_image_archive_signature valkey_sbom; do
+            path="$(jq -er --arg artifact "$artifact" '.artifacts[$artifact].path' "$candidate")"
+            expected="$(jq -er --arg artifact "$artifact" '.artifacts[$artifact].sha256' "$candidate")"
+            [[ "$path" != /* && "$path" != *..* && "$expected" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$(sha256sum "accepted/candidate/$path" | cut -d ' ' -f 1)" == "$expected" ]]
+          done
+          [[ "sha256:$(sha256sum accepted/candidate/image-index.json | cut -d ' ' -f 1)" == "$IMAGE_DIGEST" ]]
+          archive="accepted/candidate/$(jq -er '.artifacts.image_archive.path' "$candidate")"
+          archive_signature="accepted/candidate/$(jq -er '.artifacts.image_archive_signature.path' "$candidate")"
+          cosign verify-blob \
+            --bundle "$archive_signature" \
+            --certificate-identity "$candidate_identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$archive" >/dev/null
+          for dependency in postgres valkey; do
+            dependency_archive="accepted/candidate/$(jq -er --arg artifact "${dependency}_image_archive" '.artifacts[$artifact].path' "$candidate")"
+            dependency_signature="accepted/candidate/$(jq -er --arg artifact "${dependency}_image_archive_signature" '.artifacts[$artifact].path' "$candidate")"
+            cosign verify-blob \
+              --bundle "$dependency_signature" \
+              --certificate-identity "$candidate_identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$dependency_archive" >/dev/null
+          done
+
+          jq -e \
+            'length == 5
+             and (map(.target) == ["compose", "kubernetes", "openshift", "gcp", "airgap"])
+             and all(.[]; .status == "supported")' \
+            "$evidence_index" >/dev/null
+          candidate_manifest_sha="$(sha256sum "$candidate" | cut -d ' ' -f 1)"
+          candidate_artifact_digest="$(jq -er '.candidate.artifact_digest' "$dossier")"
+          archive_sha="$(jq -er '.artifacts.image_archive.sha256' "$candidate")"
+          chart_sha="$(jq -er '.artifacts.chart.sha256' "$candidate")"
+          sbom_sha="$(jq -er '.artifacts.sbom.sha256' "$candidate")"
+          source_sha="$(jq -er '.artifacts.source.sha256' "$candidate")"
+          for target in compose kubernetes openshift gcp airgap; do
+            result_path="evidence/validation-${target}-${SOURCE_COMMIT}/result.json"
+            indexed_path="$(jq -er --arg target "$target" '.[] | select(.target == $target) | .result_path' "$evidence_index")"
+            [[ "$indexed_path" == "$result_path" ]]
+            result="accepted/$result_path"
+            [[ "$(sha256sum "$result" | cut -d ' ' -f 1)" == \
+              "$(jq -er --arg target "$target" '.[] | select(.target == $target) | .result_sha256' "$evidence_index")" ]]
+            evidence_dir="$(dirname "$result")"
+            (cd "$evidence_dir" && sha256sum --strict --check files.sha256)
+            cosign verify-blob \
+              --bundle "$evidence_dir/result.sigstore.json" \
+              --certificate-identity "$validation_identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$result" >/dev/null
+            scripts/validate-release-evidence.sh \
+              --result "$result" \
+              --candidate "$candidate" \
+              --target "$target" \
+              --repository "$GITHUB_REPOSITORY" \
+              --source-commit "$SOURCE_COMMIT" \
+              --image-index-digest "$IMAGE_DIGEST" \
+              --candidate-manifest-sha256 "$candidate_manifest_sha" \
+              --candidate-artifact-digest "$candidate_artifact_digest"
+          done
+          {
+            echo "amd64_digest=$(jq -er '.image.platforms[] | select(.architecture == "amd64" and (.variant // "") == "") | .digest' "$candidate")"
+            echo "arm64_digest=$(jq -er '.image.platforms[] | select(.architecture == "arm64") | .digest' "$candidate")"
+            echo "candidate_artifact_digest=$candidate_artifact_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the original candidate workflow and artifact receipt
+        env:
+          CANDIDATE_ARTIFACT_DIGEST: ${{ steps.dossier.outputs.candidate_artifact_digest }}
+          CANDIDATE_RUN_ID: ${{ steps.release.outputs.candidate_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-candidate.yml" \
+            > /tmp/candidate-workflow.json
+          workflow_id="$(jq -er '.id' /tmp/candidate-workflow.json)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" \
+            > /tmp/candidate-run.json
+          jq -e \
+            --argjson workflow_id "$workflow_id" \
+            --arg source_commit "$SOURCE_COMMIT" \
+            '.event == "workflow_dispatch"
+             and .conclusion == "success"
+             and .head_branch == "main"
+             and .head_sha == $source_commit
+             and .workflow_id == $workflow_id' \
+            /tmp/candidate-run.json >/dev/null
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            > /tmp/candidate-artifacts-pages.json
+          jq -s '{artifacts: map(.artifacts) | add}' \
+            /tmp/candidate-artifacts-pages.json > /tmp/candidate-artifacts.json
+          name="release-candidate-$SOURCE_COMMIT"
+          count="$(jq --arg name "$name" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+            /tmp/candidate-artifacts.json)"
+          [[ "$count" == "1" ]]
+          [[ "$(jq -er --arg name "$name" \
+            '.artifacts[] | select(.name == $name and .expired == false) | .digest' \
+            /tmp/candidate-artifacts.json)" == "$CANDIDATE_ARTIFACT_DIGEST" ]]
+
+      - name: Set up Buildx for registry inspection and digest promotion only
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the accepted registry index and candidate signatures
+        env:
+          AMD64_DIGEST: ${{ steps.dossier.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.dossier.outputs.arm64_digest }}
+          IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
+          IMAGE_REPOSITORY: ${{ steps.release.outputs.image }}
+        run: |
+          image_ref="$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          docker buildx imagetools inspect --raw "$image_ref" > /tmp/registry-index.json
+          [[ "sha256:$(sha256sum /tmp/registry-index.json | cut -d ' ' -f 1)" == "$IMAGE_DIGEST" ]]
+          cmp --silent /tmp/registry-index.json accepted/candidate/image-index.json
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml@refs/heads/main"
+          for digest in "$IMAGE_DIGEST" "$AMD64_DIGEST" "$ARM64_DIGEST"; do
+            cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$IMAGE_REPOSITORY@$digest" >/dev/null
+          done
+          cosign verify-attestation \
+            --type spdxjson \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE_REPOSITORY@$AMD64_DIGEST" >/dev/null
+          cosign verify-attestation \
+            --type spdxjson \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE_REPOSITORY@$ARM64_DIGEST" >/dev/null
+
+      - name: Materialize only accepted release inputs
+        run: |
+          mkdir -p artifacts/chart
+          cp -- accepted/candidate/image-index.json artifacts/image-index.json
+          cp -- accepted/candidate/portable-ai-gateway-amd64.docker.tar \
+            artifacts/portable-ai-gateway-amd64.docker.tar
+          cp -- accepted/candidate/portable-ai-gateway-amd64.spdx.json \
+            artifacts/portable-ai-gateway-amd64.spdx.json
+          cp -- accepted/candidate/portable-ai-gateway-arm64.spdx.json \
+            artifacts/portable-ai-gateway-arm64.spdx.json
+          cp -- accepted/candidate/postgres-amd64.docker.tar artifacts/postgres-amd64.docker.tar
+          cp -- accepted/candidate/postgres-amd64.spdx.json artifacts/postgres-amd64.spdx.json
+          cp -- accepted/candidate/valkey-amd64.docker.tar artifacts/valkey-amd64.docker.tar
+          cp -- accepted/candidate/valkey-amd64.spdx.json artifacts/valkey-amd64.spdx.json
+          cp -- accepted/candidate/portable-ai-gateway-source.tar.gz \
+            artifacts/portable-ai-gateway-source.tar.gz
+          cp -- \
+            "accepted/candidate/chart/portable-ai-gateway-${{ steps.release.outputs.version }}.tgz" \
+            "artifacts/chart/portable-ai-gateway-${{ steps.release.outputs.version }}.tgz"
+          cp -- accepted/candidate/candidate.json artifacts/release-candidate.json
+          cp -- accepted/candidate/candidate.sigstore.json \
+            artifacts/release-candidate.sigstore.json
+          cp -- accepted/candidate/portable-ai-gateway-amd64.candidate.sigstore.json \
+            artifacts/portable-ai-gateway-amd64.sigstore.json
+          cp -- accepted/candidate/postgres-amd64.candidate.sigstore.json \
+            artifacts/postgres-amd64.sigstore.json
+          cp -- accepted/candidate/valkey-amd64.candidate.sigstore.json \
+            artifacts/valkey-amd64.sigstore.json
+          printf '%s\n' "${{ steps.release.outputs.image_digest }}" \
+            > artifacts/portable-ai-gateway-index.digest.txt
+
+      - name: Apply release signatures to the accepted image manifests
+        env:
+          AMD64_DIGEST: ${{ steps.dossier.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.dossier.outputs.arm64_digest }}
+          IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
+          IMAGE_REPOSITORY: ${{ steps.release.outputs.image }}
+        run: |
+          cosign sign --yes "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          cosign sign --yes "$IMAGE_REPOSITORY@$AMD64_DIGEST"
+          cosign sign --yes "$IMAGE_REPOSITORY@$ARM64_DIGEST"
+          cosign attest --yes --type spdxjson \
+            --predicate artifacts/portable-ai-gateway-amd64.spdx.json \
+            "$IMAGE_REPOSITORY@$AMD64_DIGEST"
+          cosign attest --yes --type spdxjson \
+            --predicate artifacts/portable-ai-gateway-arm64.spdx.json \
+            "$IMAGE_REPOSITORY@$ARM64_DIGEST"
+          release_identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$GITHUB_REF_NAME"
+          for digest in "$IMAGE_DIGEST" "$AMD64_DIGEST" "$ARM64_DIGEST"; do
+            cosign verify \
+              --certificate-identity "$release_identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$IMAGE_REPOSITORY@$digest" >/dev/null
+          done
+          for digest in "$AMD64_DIGEST" "$ARM64_DIGEST"; do
+            cosign verify-attestation \
+              --type spdxjson \
+              --certificate-identity "$release_identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$IMAGE_REPOSITORY@$digest" >/dev/null
+          done
+
+      - name: Publish and attest the accepted Helm chart
+        id: chart
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          chart="artifacts/chart/portable-ai-gateway-$VERSION.tgz"
+          chart_metadata="$(tar -xOf "$chart" portable-ai-gateway/Chart.yaml)"
+          [[ "$(awk '$1 == "version:" {print $2}' <<< "$chart_metadata")" == "$VERSION" ]]
+          [[ "$(awk '$1 == "appVersion:" {gsub(/\"/, "", $2); print $2}' <<< "$chart_metadata")" == "$VERSION" ]]
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          owner="${{ steps.release.outputs.owner }}"
+          chart_repository="$owner/charts/portable-ai-gateway"
+          registry_token="$(curl --fail --silent --show-error \
+            --user "${{ github.actor }}:$GH_TOKEN" \
+            --get https://ghcr.io/token \
+            --data-urlencode service=ghcr.io \
+            --data-urlencode "scope=repository:$chart_repository:pull,push" \
+            | jq -er '.token')"
+
+          fetch_manifest() {
+            curl --silent --show-error \
+              --header "Authorization: Bearer $registry_token" \
+              --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
+              --dump-header /tmp/chart-manifest.headers \
+              --output /tmp/chart-manifest.json \
+              --write-out '%{http_code}' \
+              "https://ghcr.io/v2/$chart_repository/manifests/$VERSION"
+          }
+
+          status="$(fetch_manifest)"
+          if [[ "$status" == "200" ]]; then
+            existing_dir="$(mktemp -d)"
+            helm pull "oci://ghcr.io/$chart_repository" --version "$VERSION" --destination "$existing_dir"
+            cmp --silent "$chart" "$existing_dir/portable-ai-gateway-$VERSION.tgz"
+          elif [[ "$status" == "404" ]]; then
+            helm push "$chart" "oci://ghcr.io/$owner/charts"
+          else
+            printf 'error: registry returned HTTP %s while checking the chart version\n' "$status" >&2
+            exit 1
+          fi
+
+          [[ "$(fetch_manifest)" == "200" ]]
+          chart_digest="$(awk 'tolower($1) == "docker-content-digest:" {gsub(/\r/, "", $2); print $2}' /tmp/chart-manifest.headers | tail -n 1)"
+          [[ "$chart_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "sha256:$(sha256sum /tmp/chart-manifest.json | cut -d ' ' -f 1)" == "$chart_digest" ]]
+          verified_dir="$(mktemp -d)"
+          helm pull "oci://ghcr.io/$chart_repository" --version "$VERSION" --destination "$verified_dir"
+          cmp --silent "$chart" "$verified_dir/portable-ai-gateway-$VERSION.tgz"
+          chart_ref="ghcr.io/${{ steps.release.outputs.owner }}/charts/portable-ai-gateway@$chart_digest"
+          printf '%s\n' "$chart_digest" \
+            > "artifacts/chart/portable-ai-gateway-$VERSION.digest.txt"
+          jq -n \
+            --arg schema_version "portable-ai-gateway.dev/chart-provenance/v1" \
+            --arg version "$VERSION" \
+            --arg source_commit "${{ steps.release.outputs.source_commit }}" \
+            --arg image_digest "${{ steps.release.outputs.image_digest }}" \
+            --arg dossier_sha256 "${{ steps.release.outputs.dossier_sha256 }}" \
+            --arg chart_sha256 "$(sha256sum "$chart" | cut -d ' ' -f 1)" \
+            --arg builder "$GITHUB_WORKFLOW_REF" \
+            '{
+              schema_version: $schema_version,
+              source_commit: $source_commit,
+              version: $version,
+              accepted_image_index_digest: $image_digest,
+              accepted_dossier_sha256: $dossier_sha256,
+              chart_archive_sha256: $chart_sha256,
+              builder: $builder
+            }' > "artifacts/chart/portable-ai-gateway-$VERSION.provenance.json"
+          cosign sign --yes "$chart_ref"
+          cosign attest --yes --type custom \
+            --predicate "artifacts/chart/portable-ai-gateway-$VERSION.provenance.json" \
+            "$chart_ref"
+          echo "digest=$chart_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble, sign and verify the air-gap bundle from accepted bytes
+        env:
+          AMD64_DIGEST: ${{ steps.dossier.outputs.amd64_digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          bundle="artifacts/portable-ai-gateway-airgap-$VERSION.tar.gz"
+          signature="artifacts/portable-ai-gateway-airgap-$VERSION.sigstore.json"
+          scripts/create-airgap-bundle.sh \
+            --version "$VERSION" \
+            --image "gateway|${{ steps.release.outputs.image }}@$AMD64_DIGEST|artifacts/portable-ai-gateway-amd64.docker.tar" \
+            --sbom "gateway|artifacts/portable-ai-gateway-amd64.spdx.json" \
+            --signature "gateway|artifacts/portable-ai-gateway-amd64.sigstore.json" \
+            --image "postgres|$(jq -er '.airgap_dependencies.postgres.reference' artifacts/release-candidate.json)|artifacts/postgres-amd64.docker.tar" \
+            --sbom "postgres|artifacts/postgres-amd64.spdx.json" \
+            --signature "postgres|artifacts/postgres-amd64.sigstore.json" \
+            --image "valkey|$(jq -er '.airgap_dependencies.valkey.reference' artifacts/release-candidate.json)|artifacts/valkey-amd64.docker.tar" \
+            --sbom "valkey|artifacts/valkey-amd64.spdx.json" \
+            --signature "valkey|artifacts/valkey-amd64.sigstore.json" \
+            --source-archive artifacts/portable-ai-gateway-source.tar.gz \
+            --chart-archive "artifacts/chart/portable-ai-gateway-$VERSION.tgz" \
+            --output "$bundle"
+          release_identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$GITHUB_REF_NAME"
+          scripts/sign-or-reuse-release-blob.sh \
+            --payload "$bundle" \
+            --bundle "$signature" \
+            --identity "$release_identity"
+          (cd artifacts && sha256sum "$(basename "$bundle")" > "$(basename "$bundle").sha256")
+          (cd artifacts && sha256sum --strict --check "$(basename "$bundle").sha256")
+          export COSIGN_CERTIFICATE_IDENTITY="$release_identity"
+          export COSIGN_ARCHIVE_CERTIFICATE_IDENTITY="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-candidate.yml@refs/heads/main"
+          export COSIGN_CERTIFICATE_OIDC_ISSUER=https://token.actions.githubusercontent.com
+          scripts/verify-airgap-bundle.sh --standalone --signature "$signature" "$bundle"
+
+      - name: Preserve the accepted dossier as a signed release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          dossier_archive="artifacts/portable-ai-gateway-release-dossier-$VERSION.tar.gz"
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            -czf "$dossier_archive" -C accepted .
+          (cd artifacts && sha256sum "$(basename "$dossier_archive")" > "$(basename "$dossier_archive").sha256")
+          scripts/sign-or-reuse-release-blob.sh \
+            --payload "$dossier_archive" \
+            --bundle "artifacts/portable-ai-gateway-release-dossier-$VERSION.sigstore.json" \
+            --identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$GITHUB_REF_NAME"
+
+      - name: Create the final signed release receipt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          bundle="artifacts/portable-ai-gateway-airgap-$VERSION.tar.gz"
+          dossier_archive="artifacts/portable-ai-gateway-release-dossier-$VERSION.tar.gz"
+          jq -n \
+            --arg schema_version "portable-ai-gateway.dev/release-receipt/v1" \
+            --arg tag "$GITHUB_REF_NAME" \
+            --arg source_commit "${{ steps.release.outputs.source_commit }}" \
+            --arg source_tree "${{ steps.release.outputs.source_tree }}" \
+            --arg image_repository "${{ steps.release.outputs.image }}" \
+            --arg image_index_digest "${{ steps.release.outputs.image_digest }}" \
+            --arg candidate_run_id "${{ steps.release.outputs.candidate_run_id }}" \
+            --arg dossier_run_id "${{ steps.release.outputs.dossier_run_id }}" \
+            --arg dossier_sha256 "${{ steps.release.outputs.dossier_sha256 }}" \
+            --arg dossier_artifact_digest "${{ steps.release.outputs.dossier_artifact_digest }}" \
+            --arg independent_review_sha256 "$(jq -er '.independent_review.record_sha256' accepted/receipt/dossier.json)" \
+            --arg independent_review_artifact_digest "$(jq -er '.independent_review.artifact_digest' accepted/receipt/dossier.json)" \
+            --arg chart_digest "${{ steps.chart.outputs.digest }}" \
+            --arg chart_archive_sha256 "$(sha256sum "artifacts/chart/portable-ai-gateway-$VERSION.tgz" | cut -d ' ' -f 1)" \
+            --arg sbom_sha256 "$(sha256sum artifacts/portable-ai-gateway-amd64.spdx.json | cut -d ' ' -f 1)" \
+            --arg sbom_arm64_sha256 "$(sha256sum artifacts/portable-ai-gateway-arm64.spdx.json | cut -d ' ' -f 1)" \
+            --arg image_archive_sha256 "$(sha256sum artifacts/portable-ai-gateway-amd64.docker.tar | cut -d ' ' -f 1)" \
+            --arg postgres_reference "$(jq -er '.airgap_dependencies.postgres.reference' artifacts/release-candidate.json)" \
+            --arg postgres_archive_sha256 "$(sha256sum artifacts/postgres-amd64.docker.tar | cut -d ' ' -f 1)" \
+            --arg postgres_sbom_sha256 "$(sha256sum artifacts/postgres-amd64.spdx.json | cut -d ' ' -f 1)" \
+            --arg valkey_reference "$(jq -er '.airgap_dependencies.valkey.reference' artifacts/release-candidate.json)" \
+            --arg valkey_archive_sha256 "$(sha256sum artifacts/valkey-amd64.docker.tar | cut -d ' ' -f 1)" \
+            --arg valkey_sbom_sha256 "$(sha256sum artifacts/valkey-amd64.spdx.json | cut -d ' ' -f 1)" \
+            --arg source_archive_sha256 "$(sha256sum artifacts/portable-ai-gateway-source.tar.gz | cut -d ' ' -f 1)" \
+            --arg airgap_sha256 "$(sha256sum "$bundle" | cut -d ' ' -f 1)" \
+            --arg dossier_archive_sha256 "$(sha256sum "$dossier_archive" | cut -d ' ' -f 1)" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            '{
+              schema_version: $schema_version,
+              tag: $tag,
+              source: {commit: $source_commit, tree: $source_tree},
+              image: {repository: $image_repository, index_digest: $image_index_digest},
+              accepted_evidence: {
+                candidate_run_id: $candidate_run_id,
+                dossier_run_id: $dossier_run_id,
+                dossier_sha256: $dossier_sha256,
+                dossier_artifact_digest: $dossier_artifact_digest,
+                independent_review_sha256: $independent_review_sha256,
+                independent_review_artifact_digest: $independent_review_artifact_digest
+              },
+              chart: {digest: $chart_digest, archive_sha256: $chart_archive_sha256},
+              artifacts: {
+                sbom_sha256: $sbom_sha256,
+                sbom_arm64_sha256: $sbom_arm64_sha256,
+                image_archive_sha256: $image_archive_sha256,
+                airgap_dependencies: {
+                  postgres: {reference: $postgres_reference, archive_sha256: $postgres_archive_sha256, sbom_sha256: $postgres_sbom_sha256},
+                  valkey: {reference: $valkey_reference, archive_sha256: $valkey_archive_sha256, sbom_sha256: $valkey_sbom_sha256}
+                },
+                source_archive_sha256: $source_archive_sha256,
+                airgap_sha256: $airgap_sha256,
+                dossier_archive_sha256: $dossier_archive_sha256
+              },
+              publisher: {workflow_ref: $workflow_ref}
+            }' > artifacts/release-receipt.json
+          scripts/sign-or-reuse-release-blob.sh \
+            --payload artifacts/release-receipt.json \
+            --bundle artifacts/release-receipt.sigstore.json \
+            --identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$GITHUB_REF_NAME"
+
+      - name: Promote the exact accepted multi-platform index without rebuilding
+        env:
+          IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
+          IMAGE_REPOSITORY: ${{ steps.release.outputs.image }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          version_ref="$IMAGE_REPOSITORY:$VERSION"
+          if docker buildx imagetools inspect --raw "$version_ref" > /tmp/existing-version-index.json 2>/dev/null; then
+            [[ "sha256:$(sha256sum /tmp/existing-version-index.json | cut -d ' ' -f 1)" == "$IMAGE_DIGEST" ]]
+            cmp --silent /tmp/existing-version-index.json accepted/candidate/image-index.json
+          else
+            docker buildx imagetools create \
+              --tag "$version_ref" \
+              "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          fi
+          docker buildx imagetools inspect --raw "$version_ref" > /tmp/promoted-version-index.json
+          [[ "sha256:$(sha256sum /tmp/promoted-version-index.json | cut -d ' ' -f 1)" == "$IMAGE_DIGEST" ]]
+          cmp --silent /tmp/promoted-version-index.json accepted/candidate/image-index.json
+
+      - name: Stage, verify and publish alpha release assets idempotently
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          notes="artifacts/release-notes.md"
+          {
+            echo "# Portable AI Gateway $VERSION"
+            echo
+            echo '**Alpha pre-release: not production-ready; no SLA is offered.**'
+            echo
+            echo 'This release contains the same feature set for AGPL-3.0-only and commercial licensees. It has no activation key, phone-home service, or license-conditioned feature path.'
+            echo
+            echo 'Executed target evidence, exact digests, scanner policies, reproducibility results, known limitations, and environment-specific deviations are contained in the signed release dossier. Arm64 is supply-chain scanned but is not runtime-certified by the current x64 deployment matrix. The 99.9% figure remains a design objective, not a measured SLO.'
+          } > "$notes"
+          assets=(
+            "artifacts/portable-ai-gateway-airgap-$VERSION.tar.gz"
+            "artifacts/portable-ai-gateway-airgap-$VERSION.tar.gz.sha256"
+            "artifacts/portable-ai-gateway-airgap-$VERSION.sigstore.json"
+            artifacts/portable-ai-gateway-amd64.spdx.json
+            artifacts/portable-ai-gateway-arm64.spdx.json
+            artifacts/postgres-amd64.spdx.json
+            artifacts/valkey-amd64.spdx.json
+            artifacts/portable-ai-gateway-source.tar.gz
+            artifacts/portable-ai-gateway-index.digest.txt
+            artifacts/image-index.json
+            artifacts/release-candidate.json
+            artifacts/release-candidate.sigstore.json
+            "artifacts/chart/portable-ai-gateway-$VERSION.tgz"
+            "artifacts/chart/portable-ai-gateway-$VERSION.digest.txt"
+            "artifacts/chart/portable-ai-gateway-$VERSION.provenance.json"
+            "artifacts/portable-ai-gateway-release-dossier-$VERSION.tar.gz"
+            "artifacts/portable-ai-gateway-release-dossier-$VERSION.tar.gz.sha256"
+            "artifacts/portable-ai-gateway-release-dossier-$VERSION.sigstore.json"
+            artifacts/release-receipt.json
+            artifacts/release-receipt.sigstore.json
+          )
+          for asset in "${assets[@]}"; do
+            [[ -s "$asset" ]]
+          done
+
+          release_json=/tmp/portable-ai-gateway-release.json
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$release_json" 2>/dev/null; then
+            gh release create "$GITHUB_REF_NAME" \
+              --draft \
+              --notes-file "$notes" \
+              --prerelease \
+              --verify-tag
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$release_json"
+          fi
+          jq -e \
+            --arg tag "$GITHUB_REF_NAME" \
+            '.tag_name == $tag and .prerelease == true' \
+            "$release_json" >/dev/null
+
+          downloaded_dir="$(mktemp -d)"
+          for asset in "${assets[@]}"; do
+            name="$(basename "$asset")"
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$release_json"
+            count="$(jq --arg name "$name" '[.assets[] | select(.name == $name)] | length' "$release_json")"
+            if [[ "$count" == "0" ]]; then
+              gh release upload "$GITHUB_REF_NAME" "$asset"
+              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$release_json"
+              count="$(jq --arg name "$name" '[.assets[] | select(.name == $name)] | length' "$release_json")"
+            fi
+            [[ "$count" == "1" ]]
+            asset_id="$(jq -er --arg name "$name" '.assets[] | select(.name == $name) | .id' "$release_json")"
+            gh api \
+              --header 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+              > "$downloaded_dir/$name"
+            cmp --silent "$asset" "$downloaded_dir/$name"
+          done
+
+          expected_names=/tmp/portable-ai-gateway-expected-assets.txt
+          : > "$expected_names"
+          for asset in "${assets[@]}"; do
+            basename "$asset" >> "$expected_names"
+          done
+          LC_ALL=C sort -o "$expected_names" "$expected_names"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$release_json"
+          jq -r '.assets[].name' "$release_json" | LC_ALL=C sort > /tmp/portable-ai-gateway-actual-assets.txt
+          cmp --silent "$expected_names" /tmp/portable-ai-gateway-actual-assets.txt
+
+          if [[ "$(jq -r '.draft' "$release_json")" == "true" ]]; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --draft=false \
+              --notes-file "$notes" \
+              --prerelease
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$release_json"
+          jq -e \
+            --arg tag "$GITHUB_REF_NAME" \
+            '.tag_name == $tag
+             and .draft == false
+             and .prerelease == true
+             and (.body | contains("Alpha pre-release: not production-ready; no SLA is offered."))' \
+            "$release_json" >/dev/null
+
+      - name: Preserve publication evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ steps.release.outputs.version }}
+          path: |
+            artifacts/*.json
+            artifacts/*.sha256
+            artifacts/*.txt
+            artifacts/*.tar.gz
+            artifacts/chart/*.json
+            artifacts/chart/*.txt
+            artifacts/chart/*.tgz
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

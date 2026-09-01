@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Replace the example endpoint and set PAG_PROVIDER_HOST_ALLOWLIST plus
+# PAG_PROVIDER_CREDENTIAL_BYO in the deployment environment before using this profile.
+api_version: gateway.portable-ai.dev/v1alpha1
+kind: GatewayConfiguration
+metadata:
+  version: on-prem-byo-v1
+spec:
+  tenants:
+    - id: default
+      name: On-premises evaluation
+      sensitive: false
+  providers:
+    - id: byo-openai
+      tenant_id: default
+      kind: openai-compatible
+      base_url: https://model-server.example.internal/v1
+      credential_env: PAG_PROVIDER_CREDENTIAL_BYO
+      residency: on-prem
+      native_responses: false
+  models:
+    - id: portable-chat
+      tenant_id: default
+      upstream_model: replace-with-local-model
+      capabilities:
+        chat: true
+        responses: false
+        streaming: true
+        tools: false
+        structured_output: false
+        multimodal: false
+  routes:
+    - id: on-prem-route
+      tenant_id: default
+      model_id: portable-chat
+      required_residency: on-prem
+      targets:
+        - provider_id: byo-openai
+          upstream_model: replace-with-local-model
+          residency: on-prem
+          priority: 10
+          capabilities:
+            chat: true
+            responses: false
+            streaming: true
+            tools: false
+            structured_output: false
+            multimodal: false
+  policies:
+    - id: default-policy
+      tenant_id: default
+      max_input_chars: 32768
+      denied_parameters: []
+  quotas:
+    - id: default-quota
+      tenant_id: default
+      requests_per_minute: 120
+      concurrent_requests: 20

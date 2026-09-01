@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Fail closed: the builder receives only package inputs and the optional
+# reviewed release lock. This prevents an untracked local secret/database from
+# entering a build layer when Dockerfile uses `COPY .`.
+**
+!pyproject.toml
+!README.md
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!requirements.lock
+!requirements-build.lock
+!src/
+!src/**

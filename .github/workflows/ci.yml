@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: CI
+
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  python:
+    name: Python tests and conformance
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install test and production extras
+        run: |
+          if [[ -f requirements.lock && -f requirements-build.lock && -f requirements-test.lock ]]; then
+            python -m pip install --require-hashes \
+              --requirement requirements.lock \
+              --requirement requirements-build.lock \
+              --requirement requirements-test.lock
+            python -m pip install --no-build-isolation --no-deps --editable .
+          else
+            python -m pip install --editable '.[dev,production]'
+          fi
+      - name: Compile source
+        run: python -m compileall -q src tests
+      - name: Run tests
+        run: python -m pytest --cov=portable_ai_gateway --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: warn
+
+  distribution:
+    name: Compose, Helm and Terraform validation
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+      - name: Validate Compose profiles without starting containers
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f deploy/compose/provider-egress.yaml config --quiet
+          PAG_IMAGE=ghcr.io/example/portable-ai-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          PAG_POSTGRES_IMAGE=docker.io/library/postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+          PAG_VALKEY_IMAGE=docker.io/valkey/valkey@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+            docker compose -f deploy/airgap/compose.yaml config --quiet
+          PAG_IMAGE=ghcr.io/example/portable-ai-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          PAG_POSTGRES_IMAGE=docker.io/library/postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+          PAG_VALKEY_IMAGE=docker.io/valkey/valkey@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+            docker compose -f deploy/airgap/compose.yaml -f deploy/airgap/provider-egress.yaml config --quiet
+      - name: Validate Helm chart
+        run: |
+          helm lint deploy/helm/portable-ai-gateway
+          helm template conformance deploy/helm/portable-ai-gateway > /tmp/kubernetes.yaml
+          helm template conformance deploy/helm/portable-ai-gateway \
+            -f deploy/helm/portable-ai-gateway/values-openshift.yaml > /tmp/openshift.yaml
+          helm lint deploy/helm/portable-ai-gateway \
+            -f deploy/helm/portable-ai-gateway/values-production.yaml \
+            --set 'image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+            --set 'oidc.issuer=https://issuer.invalid/' \
+            --set 'oidc.audience=portable-ai-gateway'
+      - name: Validate Terraform module
+        working-directory: infra/terraform/gcp
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+      - name: Validate shell syntax
+        run: find scripts -type f -name '*.sh' -exec bash -n '{}' ';'
+
+  compose-smoke:
+    name: Compose mock API conformance
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build and start the isolated development profile
+        run: docker compose up --build --wait --wait-timeout 240
+      - name: Exercise the public mock contract
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8080/health | jq -e '.status == "ok"'
+          curl --fail --silent --show-error http://127.0.0.1:8080/ready | jq -e '.status == "ready"'
+          curl --fail --silent --show-error http://127.0.0.1:8080/v1/models | jq -e '.data | length == 1'
+          curl --fail --silent --show-error --dump-header /tmp/chat-headers.txt \
+            --header 'Content-Type: application/json' \
+            --data '{"model":"mock-chat","messages":[{"role":"user","content":"synthetic-ci"}]}' \
+            http://127.0.0.1:8080/v1/chat/completions \
+            | jq -e '.choices[0].message.content == "mock response"'
+          grep -Eiq '^cache-control:[[:space:]]*no-store' /tmp/chat-headers.txt
+          curl --fail --silent --show-error \
+            --header 'Content-Type: application/json' \
+            --data '{"model":"mock-chat","input":"synthetic-ci"}' \
+            http://127.0.0.1:8080/v1/responses \
+            | jq -e '.object == "response"'
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8081/admin/v1/tenants)" = "401"
+      - name: Preserve service logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Remove project-scoped Compose resources
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  container:
+    name: OCI build validation
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Build without publishing
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          platforms: linux/amd64
+          build-args: |
+            VERSION=0.1.0-alpha
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,48 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+{{- if .Values.dataPlane.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-data-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-plane
+  {{- with .Values.dataPlane.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.dataPlane.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.dataPlane.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "portable-ai-gateway.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: data-plane
+---
+{{- end }}
+{{- if .Values.controlPlane.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-control-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+  {{- with .Values.controlPlane.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.controlPlane.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.controlPlane.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "portable-ai-gateway.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+{{- end }}

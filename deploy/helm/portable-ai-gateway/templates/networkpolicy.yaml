@@ -1,0 +1,54 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.dataPlane.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-data-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-plane
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "portable-ai-gateway.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: data-plane
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.ingress | nindent 8 }}
+      ports:
+        - port: {{ .Values.dataPlane.port }}
+          protocol: TCP
+  egress:
+    {{- toYaml .Values.networkPolicy.egress | nindent 4 }}
+---
+{{- end }}
+{{- if .Values.controlPlane.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-control-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "portable-ai-gateway.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.ingress | nindent 8 }}
+      ports:
+        - port: {{ .Values.controlPlane.port }}
+          protocol: TCP
+  egress:
+    {{- toYaml .Values.networkPolicy.egress | nindent 4 }}
+{{- end }}
+{{- end }}

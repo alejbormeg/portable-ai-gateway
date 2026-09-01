@@ -1,0 +1,291 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Auditable reason for creating this candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  preflight-ci:
+    name: Full CI before candidate build
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      actions: write
+
+  preflight-security:
+    name: Security and license checks before candidate build
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+
+  build-candidate:
+    name: Build one immutable candidate
+    needs:
+      - preflight-ci
+      - preflight-security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment:
+      name: candidate-build
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      AIRGAP_POSTGRES_IMAGE: ${{ vars.PAG_AIRGAP_POSTGRES_IMAGE }}
+      AIRGAP_VALKEY_IMAGE: ${{ vars.PAG_AIRGAP_VALKEY_IMAGE }}
+    steps:
+      - name: Check out candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Require the protected main branch
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse refs/remotes/origin/main)" ]]
+      - name: Resolve candidate identity and gates
+        id: candidate
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          repository="${GITHUB_REPOSITORY,,}"
+          image="ghcr.io/$repository"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$AIRGAP_POSTGRES_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]
+          [[ "$AIRGAP_VALKEY_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]
+          scripts/check-release-gates.sh --phase candidate --version "$version"
+          {
+            echo "version=$version"
+            echo "image=$image"
+            echo "tree=$tree"
+          } >> "$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Log in to GHCR
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the candidate once
+        id: image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.candidate.outputs.image }}:candidate-${{ github.sha }}
+          build-args: |
+            VERSION=${{ steps.candidate.outputs.version }}
+            REVISION=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Capture the exact registry index and platform digests
+        id: image-index
+        env:
+          IMAGE_INDEX_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          mkdir -p candidate/chart
+          image_ref="${{ steps.candidate.outputs.image }}@$IMAGE_INDEX_DIGEST"
+          docker buildx imagetools inspect --raw "$image_ref" > candidate/image-index.json
+          [[ "sha256:$(sha256sum candidate/image-index.json | cut -d ' ' -f 1)" == "$IMAGE_INDEX_DIGEST" ]]
+          amd64_count="$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64" and (.platform.variant // "") == "")] | length' candidate/image-index.json)"
+          arm64_count="$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length' candidate/image-index.json)"
+          [[ "$amd64_count" == "1" && "$arm64_count" == "1" ]]
+          platforms="$(jq -ce '[
+            .manifests[]
+            | select(.platform.os == "linux")
+            | select(.platform.architecture == "amd64" or .platform.architecture == "arm64")
+            | {os: .platform.os, architecture: .platform.architecture, variant: (.platform.variant // ""), digest: .digest}
+          ]' candidate/image-index.json)"
+          [[ "$(jq 'length' <<< "$platforms")" == "2" ]]
+          amd64_digest="$(jq -er '.[] | select(.architecture == "amd64" and .variant == "") | .digest' <<< "$platforms")"
+          arm64_digest="$(jq -er '.[] | select(.architecture == "arm64") | .digest' <<< "$platforms")"
+          {
+            echo "amd64_digest=$amd64_digest"
+            echo "arm64_digest=$arm64_digest"
+            echo "platforms=$platforms"
+          } >> "$GITHUB_OUTPUT"
+      - name: Export exact amd64 bytes for validation and the candidate SBOM
+        run: |
+          docker pull --platform linux/amd64 \
+            "${{ steps.candidate.outputs.image }}@${{ steps.image-index.outputs.amd64_digest }}"
+          docker tag \
+            "${{ steps.candidate.outputs.image }}@${{ steps.image-index.outputs.amd64_digest }}" \
+            portable-ai-gateway:candidate-amd64
+          docker save --output candidate/portable-ai-gateway-amd64.docker.tar \
+            portable-ai-gateway:candidate-amd64
+      - name: Freeze standalone air-gap data-service images
+        run: |
+          freeze_dependency() {
+            local label="$1"
+            local reference="$2"
+            docker buildx imagetools inspect --raw "$reference" > "candidate/${label}-manifest.json"
+            jq -e \
+              '.schemaVersion == 2
+               and (.manifests | not)
+               and (.config.digest | test("^sha256:[0-9a-f]{64}$"))
+               and (.layers | length > 0)' \
+              "candidate/${label}-manifest.json" >/dev/null
+            [[ "sha256:$(sha256sum "candidate/${label}-manifest.json" | cut -d ' ' -f 1)" == "${reference##*@}" ]]
+            docker pull --platform linux/amd64 "$reference"
+            docker tag "$reference" "portable-ai-gateway-dependency:${label}-amd64"
+            [[ "$(docker image inspect --format '{{.Architecture}}' "portable-ai-gateway-dependency:${label}-amd64")" == "amd64" ]]
+            docker save --output "candidate/${label}-amd64.docker.tar" \
+              "portable-ai-gateway-dependency:${label}-amd64"
+          }
+          freeze_dependency postgres "$AIRGAP_POSTGRES_IMAGE"
+          freeze_dependency valkey "$AIRGAP_VALKEY_IMAGE"
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@7b36ad622f042cab6f59a75c2ac24ccb256e9b45 # v0.20.4
+      - name: Generate accepted-input SPDX SBOMs
+        run: |
+          syft docker-archive:candidate/portable-ai-gateway-amd64.docker.tar \
+            -o spdx-json=candidate/portable-ai-gateway-amd64.spdx.json
+          syft "registry:${{ steps.candidate.outputs.image }}@${{ steps.image-index.outputs.arm64_digest }}" \
+            -o spdx-json=candidate/portable-ai-gateway-arm64.spdx.json
+          syft docker-archive:candidate/postgres-amd64.docker.tar \
+            -o spdx-json=candidate/postgres-amd64.spdx.json
+          syft docker-archive:candidate/valkey-amd64.docker.tar \
+            -o spdx-json=candidate/valkey-amd64.spdx.json
+      - name: Package source and chart before semantic validation
+        run: |
+          git archive --format=tar.gz \
+            --prefix="portable-ai-gateway-${{ steps.candidate.outputs.version }}/" \
+            --output=candidate/portable-ai-gateway-source.tar.gz HEAD
+          helm package deploy/helm/portable-ai-gateway \
+            --version "${{ steps.candidate.outputs.version }}" \
+            --app-version "${{ steps.candidate.outputs.version }}" \
+            --destination candidate/chart
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+      - name: Sign the candidate index and platforms
+        env:
+          IMAGE_INDEX_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          image="${{ steps.candidate.outputs.image }}"
+          cosign sign --yes "$image@$IMAGE_INDEX_DIGEST"
+          cosign sign --yes "$image@${{ steps.image-index.outputs.amd64_digest }}"
+          cosign sign --yes "$image@${{ steps.image-index.outputs.arm64_digest }}"
+          cosign attest --yes --type spdxjson \
+            --predicate candidate/portable-ai-gateway-amd64.spdx.json \
+            "$image@${{ steps.image-index.outputs.amd64_digest }}"
+          cosign attest --yes --type spdxjson \
+            --predicate candidate/portable-ai-gateway-arm64.spdx.json \
+            "$image@${{ steps.image-index.outputs.arm64_digest }}"
+          cosign sign-blob --yes \
+            --bundle candidate/portable-ai-gateway-amd64.candidate.sigstore.json \
+            candidate/portable-ai-gateway-amd64.docker.tar
+          cosign sign-blob --yes \
+            --bundle candidate/postgres-amd64.candidate.sigstore.json \
+            candidate/postgres-amd64.docker.tar
+          cosign sign-blob --yes \
+            --bundle candidate/valkey-amd64.candidate.sigstore.json \
+            candidate/valkey-amd64.docker.tar
+      - name: Create and sign the candidate manifest
+        env:
+          IMAGE_INDEX_DIGEST: ${{ steps.image.outputs.digest }}
+          PLATFORMS_JSON: ${{ steps.image-index.outputs.platforms }}
+          CANDIDATE_REASON: ${{ inputs.reason }}
+        run: |
+          chart="candidate/chart/portable-ai-gateway-${{ steps.candidate.outputs.version }}.tgz"
+          jq -n \
+            --arg schema_version "portable-ai-gateway.dev/release-candidate/v1" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_commit "$GITHUB_SHA" \
+            --arg source_tree "${{ steps.candidate.outputs.tree }}" \
+            --arg version "${{ steps.candidate.outputs.version }}" \
+            --arg image_repository "${{ steps.candidate.outputs.image }}" \
+            --arg image_index_digest "$IMAGE_INDEX_DIGEST" \
+            --argjson platforms "$PLATFORMS_JSON" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg reason "$CANDIDATE_REASON" \
+            --arg image_index_sha256 "$(sha256sum candidate/image-index.json | cut -d ' ' -f 1)" \
+            --arg image_archive_sha256 "$(sha256sum candidate/portable-ai-gateway-amd64.docker.tar | cut -d ' ' -f 1)" \
+            --arg image_archive_signature_sha256 "$(sha256sum candidate/portable-ai-gateway-amd64.candidate.sigstore.json | cut -d ' ' -f 1)" \
+            --arg sbom_sha256 "$(sha256sum candidate/portable-ai-gateway-amd64.spdx.json | cut -d ' ' -f 1)" \
+            --arg sbom_arm64_sha256 "$(sha256sum candidate/portable-ai-gateway-arm64.spdx.json | cut -d ' ' -f 1)" \
+            --arg postgres_reference "$AIRGAP_POSTGRES_IMAGE" \
+            --arg postgres_manifest_sha256 "$(sha256sum candidate/postgres-manifest.json | cut -d ' ' -f 1)" \
+            --arg postgres_archive_sha256 "$(sha256sum candidate/postgres-amd64.docker.tar | cut -d ' ' -f 1)" \
+            --arg postgres_signature_sha256 "$(sha256sum candidate/postgres-amd64.candidate.sigstore.json | cut -d ' ' -f 1)" \
+            --arg postgres_sbom_sha256 "$(sha256sum candidate/postgres-amd64.spdx.json | cut -d ' ' -f 1)" \
+            --arg valkey_reference "$AIRGAP_VALKEY_IMAGE" \
+            --arg valkey_manifest_sha256 "$(sha256sum candidate/valkey-manifest.json | cut -d ' ' -f 1)" \
+            --arg valkey_archive_sha256 "$(sha256sum candidate/valkey-amd64.docker.tar | cut -d ' ' -f 1)" \
+            --arg valkey_signature_sha256 "$(sha256sum candidate/valkey-amd64.candidate.sigstore.json | cut -d ' ' -f 1)" \
+            --arg valkey_sbom_sha256 "$(sha256sum candidate/valkey-amd64.spdx.json | cut -d ' ' -f 1)" \
+            --arg source_archive_sha256 "$(sha256sum candidate/portable-ai-gateway-source.tar.gz | cut -d ' ' -f 1)" \
+            --arg chart_sha256 "$(sha256sum "$chart" | cut -d ' ' -f 1)" \
+            '{
+              schema_version: $schema_version,
+              status: "candidate",
+              repository: $repository,
+              source: {commit: $source_commit, tree: $source_tree},
+              version: $version,
+              image: {repository: $image_repository, index_digest: $image_index_digest, platforms: $platforms},
+              airgap_dependencies: {
+                postgres: {reference: $postgres_reference, architecture: "amd64"},
+                valkey: {reference: $valkey_reference, architecture: "amd64"}
+              },
+              artifacts: {
+                image_index: {path: "image-index.json", sha256: $image_index_sha256},
+                image_archive: {path: "portable-ai-gateway-amd64.docker.tar", sha256: $image_archive_sha256},
+                image_archive_signature: {path: "portable-ai-gateway-amd64.candidate.sigstore.json", sha256: $image_archive_signature_sha256},
+                sbom: {path: "portable-ai-gateway-amd64.spdx.json", sha256: $sbom_sha256},
+                sbom_arm64: {path: "portable-ai-gateway-arm64.spdx.json", sha256: $sbom_arm64_sha256},
+                postgres_manifest: {path: "postgres-manifest.json", sha256: $postgres_manifest_sha256},
+                postgres_image_archive: {path: "postgres-amd64.docker.tar", sha256: $postgres_archive_sha256},
+                postgres_image_archive_signature: {path: "postgres-amd64.candidate.sigstore.json", sha256: $postgres_signature_sha256},
+                postgres_sbom: {path: "postgres-amd64.spdx.json", sha256: $postgres_sbom_sha256},
+                valkey_manifest: {path: "valkey-manifest.json", sha256: $valkey_manifest_sha256},
+                valkey_image_archive: {path: "valkey-amd64.docker.tar", sha256: $valkey_archive_sha256},
+                valkey_image_archive_signature: {path: "valkey-amd64.candidate.sigstore.json", sha256: $valkey_signature_sha256},
+                valkey_sbom: {path: "valkey-amd64.spdx.json", sha256: $valkey_sbom_sha256},
+                source: {path: "portable-ai-gateway-source.tar.gz", sha256: $source_archive_sha256},
+                chart: {path: ("chart/portable-ai-gateway-" + $version + ".tgz"), sha256: $chart_sha256}
+              },
+              builder: {workflow_ref: $workflow_ref, run_id: $workflow_run_id, run_attempt: $workflow_run_attempt},
+              reason: $reason
+            }' > candidate/candidate.json
+          cosign sign-blob --yes \
+            --bundle candidate/candidate.sigstore.json \
+            candidate/candidate.json
+      - name: Upload immutable candidate inputs
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: candidate
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Record candidate receipt
+        run: |
+          {
+            echo '### Release candidate created'
+            echo
+            echo "- Source commit: \`$GITHUB_SHA\`"
+            echo "- OCI index: \`${{ steps.candidate.outputs.image }}@${{ steps.image.outputs.digest }}\`"
+            echo "- Candidate run: \`$GITHUB_RUN_ID\`"
+            echo "- Candidate artifact digest: \`${{ steps.artifact.outputs.artifact-digest }}\`"
+            echo '- Status: candidate only; no release permission has been granted.'
+          } >> "$GITHUB_STEP_SUMMARY"

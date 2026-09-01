@@ -1,0 +1,206 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/your-account/portable-ai-gateway
+  tag: 0.1.0-alpha
+  # Prefer an immutable digest in production. When set, tag is ignored.
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+gateway:
+  # Safe, mock-only evaluation default. Use values-production.yaml for any
+  # environment that carries non-synthetic traffic.
+  appEnvironment: development
+  sourceUrl: https://github.com/your-account/portable-ai-gateway
+  configVersion: helm-v1alpha1
+  gitOpsMode: true
+  allowAnonymousDevelopment: true
+  providerHostAllowlist: ""
+  configMountPath: /etc/portable-ai-gateway/config.yaml
+  # This is a public, non-secret declarative example. Put credentials in a Secret.
+  config:
+    api_version: gateway.portable-ai.dev/v1alpha1
+    kind: GatewayConfiguration
+    metadata:
+      version: helm-mock-v1
+    spec:
+      tenants:
+        - id: default
+          name: Helm evaluation
+          sensitive: false
+      providers:
+        - id: mock
+          tenant_id: default
+          kind: mock
+          residency: local
+          native_responses: true
+      models:
+        - id: mock-chat
+          tenant_id: default
+          upstream_model: mock-chat
+          capabilities:
+            chat: true
+            responses: true
+            streaming: true
+      routes:
+        - id: default-mock
+          tenant_id: default
+          model_id: mock-chat
+          targets:
+            - provider_id: mock
+              upstream_model: mock-chat
+              residency: local
+              priority: 10
+              capabilities:
+                chat: true
+                responses: true
+                streaming: true
+                tools: false
+                structured_output: false
+                multimodal: false
+      policies:
+        - id: default-policy
+          tenant_id: default
+          max_input_chars: 32768
+      quotas:
+        - id: default-quota
+          tenant_id: default
+          requests_per_minute: 120
+          concurrent_requests: 20
+
+# The chart never creates credentials. These keys must exist in an externally
+# managed Secret when PostgreSQL, Valkey/Redis or OIDC are enabled.
+existingSecret:
+  name: ""
+  databaseUrlKey: database-url
+  cacheUrlKey: cache-url
+  apiKeyPepperKey: api-key-pepper
+  oidcHs256SecretKey: oidc-hs256-secret
+  oidcJwksJsonKey: oidc-jwks-json
+  optionalKeys: true
+  optionalOidcKeys: true
+
+oidc:
+  issuer: ""
+  audience: ""
+  # For asymmetric OIDC without network access, inject JWKS JSON via extraEnv.
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+
+dataPlane:
+  enabled: true
+  replicaCount: 1
+  port: 8080
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+  extraEnv: []
+
+controlPlane:
+  enabled: true
+  replicaCount: 1
+  port: 8081
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+  extraEnv: []
+
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 3
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 6
+
+networkPolicy:
+  enabled: false
+  # A podSelector without namespaceSelector permits only same-namespace pods.
+  ingress:
+    - podSelector: {}
+  # Provider and database egress is environment-specific. Define complete
+  # Kubernetes NetworkPolicy egress rules before enabling this section.
+  egress: []
+
+routes:
+  dataPlane:
+    enabled: false
+    host: ""
+    annotations: {}
+    tls:
+      enabled: true
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  controlPlane:
+    enabled: false
+    host: ""
+    annotations: {}
+    tls:
+      enabled: true
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+
+# Build and packaging
+build/
+dist/
+*.tar
+*.tgz
+*.zip
+*.spdx.json
+!tests/fixtures/*.spdx.json
+*.sigstore.json
+*.pem
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.tfvars
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# IDE and operating system
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated air-gap and benchmark output
+artifacts/
+airgap-bundle/
+benchmark-results/

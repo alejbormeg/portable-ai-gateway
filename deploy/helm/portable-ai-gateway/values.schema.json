@@ -1,0 +1,82 @@
+{
+  "$comment": "SPDX-License-Identifier: AGPL-3.0-only",
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^$|^sha256:[a-f0-9]{64}$" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] },
+        "pullSecrets": { "type": "array" }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "required": ["appEnvironment", "sourceUrl", "configMountPath", "config"],
+      "properties": {
+        "appEnvironment": { "type": "string", "minLength": 1 },
+        "sourceUrl": { "type": "string", "format": "uri" },
+        "configMountPath": { "type": "string", "pattern": "^/" },
+        "config": { "type": "object" }
+      }
+    },
+    "dataPlane": {
+      "type": "object",
+      "required": ["enabled", "port"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "controlPlane": {
+      "type": "object",
+      "required": ["enabled", "port"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    }
+  },
+  "required": ["image", "gateway", "dataPlane", "controlPlane"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "gateway": {
+            "properties": { "appEnvironment": { "const": "production" } },
+            "required": ["appEnvironment"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "image": {
+            "properties": {
+              "digest": { "pattern": "^sha256:[a-f0-9]{64}$" }
+            },
+            "required": ["digest"]
+          },
+          "oidc": {
+            "properties": {
+              "issuer": { "type": "string", "minLength": 1 },
+              "audience": { "type": "string", "minLength": 1 }
+            },
+            "required": ["issuer", "audience"]
+          },
+          "existingSecret": {
+            "properties": {
+              "name": { "type": "string", "minLength": 1 }
+            },
+            "required": ["name"]
+          }
+        }
+      }
+    }
+  ]
+}

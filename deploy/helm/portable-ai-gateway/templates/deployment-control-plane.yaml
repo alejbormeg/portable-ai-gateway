@@ -1,0 +1,177 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+{{- if .Values.controlPlane.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-control-plane
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  {{- if not .Values.controlPlane.autoscaling.enabled }}
+  replicas: {{ .Values.controlPlane.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "portable-ai-gateway.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toYaml .Values.gateway.config | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "portable-ai-gateway.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: control-plane
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "portable-ai-gateway.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: control-plane
+          image: {{ include "portable-ai-gateway.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - control-plane
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ .Values.controlPlane.port | quote }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.controlPlane.port }}
+              protocol: TCP
+          env:
+            - name: PAG_APP_ENV
+              value: {{ .Values.gateway.appEnvironment | quote }}
+            - name: PAG_CONFIG_PATH
+              value: {{ .Values.gateway.configMountPath | quote }}
+            - name: PAG_CONFIG_VERSION
+              value: {{ .Values.gateway.configVersion | quote }}
+            - name: PAG_GITOPS_MODE
+              value: {{ .Values.gateway.gitOpsMode | quote }}
+            - name: PAG_ALLOW_ANONYMOUS_DEV
+              value: {{ .Values.gateway.allowAnonymousDevelopment | quote }}
+            - name: PAG_SOURCE_URL
+              value: {{ .Values.gateway.sourceUrl | quote }}
+            {{- if .Values.gateway.providerHostAllowlist }}
+            - name: PAG_PROVIDER_HOST_ALLOWLIST
+              value: {{ .Values.gateway.providerHostAllowlist | quote }}
+            {{- end }}
+            {{- if .Values.oidc.issuer }}
+            - name: PAG_OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            {{- end }}
+            {{- if .Values.oidc.audience }}
+            - name: PAG_OIDC_AUDIENCE
+              value: {{ .Values.oidc.audience | quote }}
+            {{- end }}
+            {{- if .Values.existingSecret.name }}
+            - name: PAG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.databaseUrlKey }}
+                  optional: {{ .Values.existingSecret.optionalKeys }}
+            - name: PAG_CACHE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.cacheUrlKey }}
+                  optional: {{ .Values.existingSecret.optionalKeys }}
+            - name: PAG_API_KEY_PEPPER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.apiKeyPepperKey }}
+                  optional: {{ .Values.existingSecret.optionalKeys }}
+            - name: PAG_OIDC_HS256_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.oidcHs256SecretKey }}
+                  optional: {{ .Values.existingSecret.optionalOidcKeys }}
+            - name: PAG_OIDC_JWKS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.oidcJwksJsonKey }}
+                  optional: {{ .Values.existingSecret.optionalOidcKeys }}
+            {{- else }}
+            # The mock-only default must also run under an OpenShift-assigned
+            # random UID, so it does not depend on a writable image-owned path.
+            - name: PAG_DATABASE_URL
+              value: "memory://"
+            - name: PAG_CACHE_URL
+              value: "memory://"
+            - name: PAG_API_KEY_PEPPER
+              value: "development-only-api-key-pepper"
+            {{- end }}
+            {{- with .Values.controlPlane.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: {{ .Values.gateway.configMountPath }}
+              subPath: config.yaml
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "portable-ai-gateway.fullname" . }}-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

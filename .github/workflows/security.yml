@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Security
+
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "23 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: SAST, dependencies, licenses, secrets and SBOM
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out complete source history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime and pinned scanners
+        run: |
+          if [[ -f requirements.lock ]]; then
+            python -m pip install --require-hashes --requirement requirements.lock
+          else
+            python -m pip install --editable '.[production]'
+          fi
+          python -m pip freeze --exclude-editable > artifacts-runtime-requirements.txt
+          python - <<'PY' > artifacts-runtime-packages.txt
+          from importlib.metadata import distributions
+
+          excluded = {"pip", "portable-ai-gateway", "setuptools", "wheel"}
+          names = {
+              (distribution.metadata.get("Name") or "").strip()
+              for distribution in distributions()
+          }
+          print("\n".join(sorted(name for name in names if name and name.lower() not in excluded)))
+          PY
+          python -m pip install \
+            bandit==1.8.6 \
+            cyclonedx-bom==7.1.0 \
+            detect-secrets==1.5.0 \
+            pip-audit==2.9.0 \
+            pip-licenses==5.0.0
+      - name: Run Python SAST
+        run: bandit -q -r src -ll -f json -o artifacts-bandit.json
+      - name: Audit vulnerable Python dependencies
+        run: pip-audit --strict --requirement artifacts-runtime-requirements.txt --format=json --output=artifacts-pip-audit.json
+      - name: Inventory and enforce dependency licenses
+        run: |
+          mapfile -t runtime_packages < artifacts-runtime-packages.txt
+          pip-licenses --packages "${runtime_packages[@]}" --format=json --with-urls --output-file=artifacts-licenses.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          records = json.loads(Path("artifacts-licenses.json").read_text())
+          forbidden = ("AGPL", "LGPL", "SSPL", "COMMONS CLAUSE", "BUSINESS SOURCE")
+          unknown = ("", "UNKNOWN", "UNKNOWN LICENSE", "NONE", "UNLICENSED")
+          violations = []
+          for record in records:
+              name = record.get("Name", "")
+              raw_license = record.get("License") or ""
+              license_name = raw_license.strip().upper()
+              if name.lower() == "portable-ai-gateway":
+                  continue
+              strong_gpl = "GPL" in license_name and "LGPL" not in license_name
+              if (
+                  license_name in unknown
+                  or "UNKNOWN" in license_name
+                  or "PROPRIETARY" in license_name
+                  or strong_gpl
+                  or any(term in license_name for term in forbidden)
+              ):
+                  violations.append(f"{name}: {raw_license or 'UNKNOWN'}")
+          if violations:
+              raise SystemExit("Runtime license review required:\n" + "\n".join(violations))
+          PY
+      - name: Scan committed files for secrets
+        run: |
+          detect-secrets scan --all-files \
+            --exclude-files '(^|/)(\.git|artifacts|htmlcov)/' \
+            --exclude-lines '(development-only|replace-with|external-secret|top secret|gateway:secret|sha256:[a-f]{64}|uses: [^ ]+@[0-9a-f]{40})' \
+            > artifacts-secrets.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("artifacts-secrets.json").read_text())
+          findings = report.get("results", {})
+          if findings:
+              lines = [f"{path}: {len(items)} potential secret(s)" for path, items in findings.items()]
+              raise SystemExit("Potential committed secrets detected:\n" + "\n".join(lines))
+          PY
+      - name: Generate dependency SBOM
+        run: cyclonedx-py requirements artifacts-runtime-requirements.txt --output-format JSON --output-file artifacts-python.cdx.json
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-evidence
+          path: |
+            artifacts-*.json
+            artifacts-runtime-*.txt
+          if-no-files-found: warn

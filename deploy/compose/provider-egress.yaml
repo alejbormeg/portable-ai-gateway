@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Opt-in override for Vertex AI or a BYO provider reachable outside the Compose
+# project. The base Compose topology remains network-isolated for mock testing.
+services:
+  data-plane:
+    environment:
+      PAG_PROVIDER_HOST_ALLOWLIST: ${PAG_BYO_PROVIDER_HOST:-model-server.example.internal}
+      PAG_PROVIDER_CREDENTIAL_BYO: ${PAG_PROVIDER_CREDENTIAL_BYO:-}
+    volumes:
+      - ./deploy/config/on-prem.yaml:/etc/portable-ai-gateway/config.yaml:ro
+    networks:
+      - backend
+      - provider-egress
+  control-plane:
+    environment:
+      PAG_PROVIDER_HOST_ALLOWLIST: ${PAG_BYO_PROVIDER_HOST:-model-server.example.internal}
+    volumes:
+      - ./deploy/config/on-prem.yaml:/etc/portable-ai-gateway/config.yaml:ro
+
+networks:
+  # Only the data plane joins this network. PostgreSQL, Valkey and the
+  # control plane remain isolated on the internal backend network.
+  provider-egress: {}

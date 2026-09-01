@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+schema_version: "1.0"
+project:
+  id: "portable-ai-gateway"
+  name: "Portable AI Gateway"
+  phase: "v0.1.0-alpha-productization"
+  canonical_language: "en"
+  preserve_technical_terms: true
+
+paths:
+  documentation: "docs"
+  poc_output: ".ai-ra/pocs"
+  product_version: "VERSION"
+
+governance:
+  synthetic_data_by_default: true
+  simulated_provider_by_default: true
+  evidence_before_claims: true
+  independent_review_required: true
+  external_actions_requiring_explicit_approval:
+    - "download-dependencies-or-container-images"
+    - "use-credentials"
+    - "use-non-synthetic-data"
+    - "create-or-change-external-resources"
+    - "deploy-to-a-cluster-or-cloud"
+    - "incur-costs"
+    - "publish-artifacts-or-repository"
+
+platforms:
+  allowed_for_comparison:
+    - "docker-local"
+    - "openshift-on-premise"
+    - "aws"
+    - "azure"
+    - "gcp"
+  default_execution: "docker-local"
+
+statuses:
+  poc:
+    - "planned"
+    - "supported"
+    - "rejected"
+    - "inconclusive"
+
+product_requirements:
+  - id: "PAG-REQ-001"
+    title: "Customer-owned and self-hosted"
+    source: "approved implementation plan"
+  - id: "PAG-REQ-002"
+    title: "Same first-party feature set under AGPL and commercial terms"
+    source: "approved implementation plan"
+  - id: "PAG-REQ-003"
+    title: "Portable across development, GCP, Kubernetes and OpenShift"
+    source: "approved implementation plan"
+  - id: "PAG-REQ-004"
+    title: "Replaceable provider, auth, policy, routing, audit and observability adapters"
+    source: "approved implementation plan"
+  - id: "PAG-REQ-005"
+    title: "Tenant isolation, OIDC, scoped keys and metadata-only audit"
+    source: "approved implementation plan"
+
+publication_gates:
+  - "verified copyright holder and publication rights"
+  - "approved dual-license and commercial agreement"
+  - "resolved legal/contact placeholders"
+  - "complete third-party license inventory"
+  - "executed security, portability and performance evidence"

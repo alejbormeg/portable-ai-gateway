@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Image-only Compose profile for the extracted air-gap bundle. All image
+# references are mandatory and must resolve to archives imported locally.
+name: portable-ai-gateway
+
+x-gateway-common: &gateway-common
+  image: ${PAG_IMAGE:?Set PAG_IMAGE to the imported immutable gateway reference}
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  environment: &gateway-environment
+    PAG_APP_ENV: development
+    PAG_DATABASE_URL: postgresql://portable_gateway:${PAG_POSTGRES_PASSWORD:-development-only-change-me}@postgres:5432/portable_gateway
+    PAG_CACHE_URL: redis://valkey:6379/0
+    PAG_CONFIG_PATH: /etc/portable-ai-gateway/config.yaml
+    PAG_CONFIG_VERSION: airgap-development
+    PAG_GITOPS_MODE: "false"
+    PAG_ALLOW_ANONYMOUS_DEV: "true"
+    PAG_API_KEY_PEPPER: ${PAG_API_KEY_PEPPER:-development-only-change-me}
+    PAG_SOURCE_URL: ${PAG_SOURCE_URL:-https://source.invalid/portable-ai-gateway}
+  volumes:
+    - ../config/development.yaml:/etc/portable-ai-gateway/config.yaml:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    valkey:
+      condition: service_healthy
+  networks:
+    - backend
+
+services:
+  data-plane:
+    <<: *gateway-common
+    command:
+      - data-plane
+    ports:
+      - "${PAG_BIND_ADDRESS:-127.0.0.1}:${PAG_DATA_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  control-plane:
+    <<: *gateway-common
+    command:
+      - control-plane
+    ports:
+      - "${PAG_BIND_ADDRESS:-127.0.0.1}:${PAG_CONTROL_PORT:-8081}:8081"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  postgres:
+    image: ${PAG_POSTGRES_IMAGE:?Set PAG_POSTGRES_IMAGE to the imported immutable PostgreSQL reference}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: portable_gateway
+      POSTGRES_USER: portable_gateway
+      POSTGRES_PASSWORD: ${PAG_POSTGRES_PASSWORD:-development-only-change-me}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U portable_gateway -d portable_gateway
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  valkey:
+    image: ${PAG_VALKEY_IMAGE:?Set PAG_VALKEY_IMAGE to the imported immutable Valkey reference}
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --save
+      - "60"
+      - "1"
+      - --loglevel
+      - warning
+    healthcheck:
+      test:
+        - CMD
+        - valkey-cli
+        - ping
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - valkey-data:/data
+    networks:
+      - backend
+
+networks:
+  backend:
+    internal: true
+
+volumes:
+  postgres-data:
+  valkey-data:

@@ -1,0 +1,14 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+Portable AI Gateway {{ .Chart.AppVersion }} has been rendered.
+
+Data plane service:
+  {{ include "portable-ai-gateway.fullname" . }}-data-plane:{{ .Values.dataPlane.service.port }}
+Control plane service:
+  {{ include "portable-ai-gateway.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}
+
+The default values run a network-free mock in development mode. Before production use:
+  * set image.digest to an immutable sha256 digest;
+  * configure gateway.sourceUrl for your public corresponding-source location;
+  * set existingSecret.name with PostgreSQL, cache, API-key pepper and OIDC data;
+  * layer values-production.yaml and replace every placeholder;
+  * keep the control plane private unless an authenticated ingress is required.

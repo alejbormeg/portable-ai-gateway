@@ -1,0 +1,10 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "portable-ai-gateway.fullname" . }}-config
+  labels:
+    {{- include "portable-ai-gateway.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml .Values.gateway.config | nindent 4 }}

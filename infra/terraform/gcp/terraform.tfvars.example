@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+project_id      = "replace-with-gcp-project"
+region          = "europe-west1"
+vertex_location = "europe-west1"
+vertex_residency = "eu"
+vertex_model    = "REPLACE_WITH_APPROVED_VERTEX_MODEL"
+secret_replication_locations = ["europe-west1"]
+
+# Releases publish this form. Tags alone are intentionally rejected.
+image      = "ghcr.io/your-account/portable-ai-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+source_url = "https://github.com/your-account/portable-ai-gateway"
+
+# Generate these outside Terraform and store state in an encrypted, access-
+# controlled remote backend. Never commit a real tfvars file.
+database_password = "replace-with-at-least-20-random-characters"
+api_key_pepper    = "replace-with-at-least-32-random-characters"
+
+oidc_issuer    = "https://issuer.example.com/"
+oidc_audience  = "portable-ai-gateway"
+oidc_jwks_json = jsonencode({
+  keys = [{
+    kty = "RSA"
+    kid = "replace-with-key-id"
+    use = "sig"
+    alg = "RS256"
+    n   = "replace-with-base64url-modulus"
+    e   = "AQAB"
+  }]
+})
+
+# Keep Cloud Run IAM authentication by default. To expose the data plane for
+# application-level OIDC/API-key auth, explicitly opt in:
+# data_plane_invoker_members = ["allUsers"]
+
+cloud_sql_availability_type = "ZONAL" # use REGIONAL for production
+cache_tier                  = "BASIC" # use STANDARD_HA for production
