@@ -48,6 +48,17 @@ async def test_admin_requires_oidc_and_crud_is_audited(store, settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_anonymous_development_identity_is_data_plane_only(store, settings) -> None:
+    anonymous_settings = replace(settings, app_env="development", allow_anonymous_dev=True)
+
+    async with asgi_client(create_control_plane(anonymous_settings, store)) as client:
+        denied = await client.get("/admin/v1/tenants")
+
+    assert denied.status_code == 401
+    assert denied.json()["error"]["code"] == "invalid_authentication"
+
+
+@pytest.mark.asyncio
 async def test_authenticated_admin_failures_keep_actor_status_and_error_code(store, settings) -> None:
     async with asgi_client(create_control_plane(settings, store)) as client:
         invalid = await client.post(

@@ -48,7 +48,7 @@ traceability:
 metrics:
   - name: "mandatory_functional_conformance"
     threshold: "100%"
-    observed: "137/137 tests passed on GitHub for commit 167a3fd and PostgreSQL, Valkey and both gateways became healthy; public host access then failed because Docker omitted port mappings for the internal-only network. The corrected dual-network topology passes 141/141 locally and awaits a new GitHub run; the remaining real-service/platform matrix was not executed"
+    observed: "GitHub commit 44f75cb proved PostgreSQL/Valkey readiness, both loopback mappings and all five positive mock API checks; only the anonymous control-plane status assertion failed. Anonymous development identity is now data-plane-only and 142/142 local tests pass; a final GitHub rerun and the remaining real-service/platform matrix are pending"
   - name: "negative_auth_and_tenant_isolation"
     threshold: "100% pass; 0 cross-tenant disclosures"
     observed: "Local negative scope, sensitive-tenant, cross-tenant, key-lifecycle and tenant-recreation scenarios passed; production IdP and adversarial platform tests were not executed"

@@ -445,7 +445,16 @@ def create_control_plane(
         request.state.extension_operation = action
         capture_admin_configuration(request)
         try:
-            context = runtime.auth.authenticate(request.headers.get("Authorization"))
+            authorization = request.headers.get("Authorization")
+            if not authorization:
+                raise GatewayError(
+                    401,
+                    "Invalid or missing bearer token",
+                    "authentication_error",
+                    "invalid_authentication",
+                    {"WWW-Authenticate": "Bearer"},
+                )
+            context = runtime.auth.authenticate(authorization)
         except GatewayError as exc:
             request.state.admin_audit_recorded = True
             runtime.audit.record(

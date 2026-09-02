@@ -33,10 +33,19 @@ The failing topology attached the gateways exclusively to an `internal` bridge.
 Current Docker Engine does not publish host ports for that topology. The
 remediation attaches only the two gateway services to an additional normal
 `host-access` bridge, keeps PostgreSQL and Valkey exclusively on the internal
-backend, and adds an executable topology regression test. The remediated source
-passes **141/141** local tests and resolves all four Compose base/override
-configurations. A new GitHub run is still required to accept the public mock
-contract; no local container was started while applying this remediation.
+backend, and adds an executable topology regression test.
+
+A follow-up GitHub Compose log for commit
+`44f75cb0b27ef112aeea758d5db42e843831035f` (supplied-text SHA-256
+`e0dc130afe9293b00eac6eb9eb77d509c5d3e37ba9f00e347d96ba8204b1f701`)
+proves both loopback mappings, health, readiness, model listing, deterministic
+Chat Completions, `Cache-Control: no-store`, and native Responses. Its final
+negative-admin assertion failed because anonymous development authentication
+was also evaluated by the control plane, producing an OIDC denial instead of
+the expected missing-credential `401`. The corrected source now makes anonymous
+development identity data-plane-only, preserves the authentication SPI, passes
+**142/142** local tests, and still requires one final GitHub rerun. No local
+container was started while applying this remediation.
 
 ## Execution identity
 

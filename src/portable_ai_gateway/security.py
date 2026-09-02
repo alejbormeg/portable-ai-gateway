@@ -258,6 +258,8 @@ class AuthService:
         return self.jwt.verify(token)
 
     def require_admin(self, authorization: str | None) -> AuthContext:
+        if not authorization:
+            raise _unauthorized()
         context = self.authenticate(authorization)
         if context.method != "jwt":
             raise GatewayError(403, "Administration requires OIDC", "permission_error", "oidc_required")
