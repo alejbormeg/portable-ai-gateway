@@ -23,7 +23,7 @@ x-gateway-common: &gateway-common
     PAG_GITOPS_MODE: "false"
     PAG_ALLOW_ANONYMOUS_DEV: "true"
     PAG_API_KEY_PEPPER: ${PAG_API_KEY_PEPPER:-development-only-change-me}
-    PAG_SOURCE_URL: ${PAG_SOURCE_URL:-https://github.com/your-account/portable-ai-gateway}
+    PAG_SOURCE_URL: ${PAG_SOURCE_URL:-https://github.com/alejbormeg/portable-ai-gateway}
   volumes:
     - ./deploy/config/development.yaml:/etc/portable-ai-gateway/config.yaml:ro
   depends_on:

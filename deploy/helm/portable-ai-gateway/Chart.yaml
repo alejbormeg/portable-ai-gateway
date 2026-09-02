@@ -5,9 +5,9 @@ description: Customer-owned AI gateway data plane and control plane
 type: application
 version: 0.1.0-alpha.0
 appVersion: 0.1.0-alpha
-home: https://github.com/your-account/portable-ai-gateway
+home: https://github.com/alejbormeg/portable-ai-gateway
 sources:
-  - https://github.com/your-account/portable-ai-gateway
+  - https://github.com/alejbormeg/portable-ai-gateway
 keywords:
   - ai
   - gateway

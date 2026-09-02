@@ -28,12 +28,12 @@ The development profile uses synthetic configuration and the mock provider. It r
 
 ```sh
 # SPDX-License-Identifier: AGPL-3.0-only
-git clone <YOUR_REPOSITORY_URL>
+git clone https://github.com/alejbormeg/portable-ai-gateway.git
 cd portable-ai-gateway
 docker compose up --build
 ```
 
-At startup, both gateway modes validate the mounted synthetic configuration; the first process to find the empty PostgreSQL store seeds it, and later imperative state is preserved because this profile is not GitOps-authoritative. After the containers report ready, follow [the development quickstart](docs/deployment/development.md) to send a deterministic request. Do not publish a repository while `<YOUR_REPOSITORY_URL>` or any release-gate placeholder remains unresolved.
+At startup, both gateway modes validate the mounted synthetic configuration; the first process to find the empty PostgreSQL store seeds it, and later imperative state is preserved because this profile is not GitOps-authoritative. After the containers report ready, follow [the development quickstart](docs/deployment/development.md) to send a deterministic request. Do not publish a release while any release-gate placeholder remains unresolved.
 
 ## Deployment paths
 

@@ -48,7 +48,7 @@ traceability:
 metrics:
   - name: "mandatory_functional_conformance"
     threshold: "100%"
-    observed: "GitHub commit 44f75cb proved PostgreSQL/Valkey readiness, both loopback mappings and all five positive mock API checks; only the anonymous control-plane status assertion failed. Anonymous development identity is now data-plane-only and 142/142 local tests pass; a final GitHub rerun and the remaining real-service/platform matrix are pending"
+    observed: "142/142 local tests and all four GitHub CI jobs passed for commit 609e190, including PostgreSQL/Valkey readiness, both loopback mappings, all positive mock API checks and the anonymous control-plane negative; the remaining real-service/platform matrix is pending"
   - name: "negative_auth_and_tenant_isolation"
     threshold: "100% pass; 0 cross-tenant disclosures"
     observed: "Local negative scope, sensitive-tenant, cross-tenant, key-lifecycle and tenant-recreation scenarios passed; production IdP and adversarial platform tests were not executed"

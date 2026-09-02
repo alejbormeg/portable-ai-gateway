@@ -16,7 +16,7 @@ Package only local files:
 # SPDX-License-Identifier: AGPL-3.0-only
 scripts/create-airgap-bundle.sh \
   --version 0.1.0-alpha \
-  --image 'gateway|ghcr.io/OWNER/portable-ai-gateway@sha256:REPLACE|/approved/gateway.oci.tar' \
+  --image 'gateway|ghcr.io/alejbormeg/portable-ai-gateway@sha256:REPLACE|/approved/gateway.oci.tar' \
   --sbom 'gateway|/approved/gateway.spdx.json' \
   --signature 'gateway|/approved/gateway.sigstore.json' \
   --source-archive /approved/portable-ai-gateway-source.tar.gz \
@@ -32,7 +32,7 @@ Transfer the bundle, its separately published `.sha256` file, and its external `
 ```sh
 # SPDX-License-Identifier: AGPL-3.0-only
 (cd artifacts && sha256sum --check portable-ai-gateway-airgap-0.1.0-alpha.tar.gz.sha256)
-export COSIGN_CERTIFICATE_IDENTITY='https://github.com/OWNER/portable-ai-gateway/.github/workflows/release.yml@refs/tags/v0.1.0-alpha'
+export COSIGN_CERTIFICATE_IDENTITY='https://github.com/alejbormeg/portable-ai-gateway/.github/workflows/release.yml@refs/tags/v0.1.0-alpha'
 scripts/verify-airgap-bundle.sh \
   --standalone \
   --signature artifacts/portable-ai-gateway-airgap-0.1.0-alpha.sigstore.json \

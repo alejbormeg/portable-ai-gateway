@@ -7,8 +7,8 @@ vertex_model    = "REPLACE_WITH_APPROVED_VERTEX_MODEL"
 secret_replication_locations = ["europe-west1"]
 
 # Releases publish this form. Tags alone are intentionally rejected.
-image      = "ghcr.io/your-account/portable-ai-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-source_url = "https://github.com/your-account/portable-ai-gateway"
+image      = "ghcr.io/alejbormeg/portable-ai-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+source_url = "https://github.com/alejbormeg/portable-ai-gateway"
 
 # Generate these outside Terraform and store state in an encrypted, access-
 # controlled remote backend. Never commit a real tfvars file.

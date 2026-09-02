@@ -44,7 +44,12 @@ negative-admin assertion failed because anonymous development authentication
 was also evaluated by the control plane, producing an OIDC denial instead of
 the expected missing-credential `401`. The corrected source now makes anonymous
 development identity data-plane-only, preserves the authentication SPI, passes
-**142/142** local tests, and still requires one final GitHub rerun. No local
+**142/142** local tests. GitHub Actions run `#19` for commit
+`609e1906f534152a18e001cdcfd46b71de67fa77` subsequently completed all four CI
+jobs successfully: Python tests/conformance, Compose/Helm/Terraform validation,
+Compose mock API conformance, and OCI build validation. The screenshot supplied
+by the repository owner records the green run; it is acceptance evidence for
+this CI baseline, not a substitute for the complete release matrix. No local
 container was started while applying this remediation.
 
 ## Execution identity
@@ -98,7 +103,7 @@ The 135-test suite includes:
 
 ## Configuration and deployment-static checks
 
-The development, on-prem and deterministic benchmark `GatewayConfiguration` documents passed application-level validation with development-only settings. The raw GCP template failed closed on `YOUR_GCP_PROJECT`; an in-memory copy with `portable-gateway-test` passed, proving the template must be hydrated rather than accepted accidentally.
+The development, on-prem and deterministic benchmark `GatewayConfiguration` documents passed application-level validation with development-only settings. The raw GCP template failed closed on its deliberately unhydrated project sentinel; an in-memory copy with `portable-gateway-test` passed, proving the template must be hydrated rather than accepted accidentally.
 
 The following completed without starting a container or contacting a registry:
 

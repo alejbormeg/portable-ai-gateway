@@ -4,7 +4,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/your-account/portable-ai-gateway
+  repository: ghcr.io/alejbormeg/portable-ai-gateway
   tag: 0.1.0-alpha
   # Prefer an immutable digest in production. When set, tag is ignored.
   digest: ""
@@ -15,7 +15,7 @@ gateway:
   # Safe, mock-only evaluation default. Use values-production.yaml for any
   # environment that carries non-synthetic traffic.
   appEnvironment: development
-  sourceUrl: https://github.com/your-account/portable-ai-gateway
+  sourceUrl: https://github.com/alejbormeg/portable-ai-gateway
   configVersion: helm-v1alpha1
   gitOpsMode: true
   allowAnonymousDevelopment: true
