@@ -124,7 +124,14 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8081/admin/v1/tenants)" = "401"
       - name: Preserve service logs on failure
         if: failure()
-        run: docker compose logs --no-color
+        run: |
+          docker compose ps
+          docker compose logs --no-color
+          for container in $(docker compose ps -q); do
+            echo "::group::health state for ${container}"
+            docker inspect --format '{{json .State.Health}}' "${container}"
+            echo "::endgroup::"
+          done
       - name: Remove project-scoped Compose resources
         if: always()
         run: docker compose down --volumes --remove-orphans
