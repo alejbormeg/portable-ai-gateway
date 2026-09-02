@@ -66,15 +66,28 @@ jobs:
           pip-licenses --packages "${runtime_packages[@]}" --format=json --with-urls --output-file=artifacts-licenses.json
           python - <<'PY'
           import json
+          from importlib.metadata import PackageNotFoundError, metadata
           from pathlib import Path
 
-          records = json.loads(Path("artifacts-licenses.json").read_text())
+          report_path = Path("artifacts-licenses.json")
+          records = json.loads(report_path.read_text())
           forbidden = ("AGPL", "LGPL", "SSPL", "COMMONS CLAUSE", "BUSINESS SOURCE")
           unknown = ("", "UNKNOWN", "UNKNOWN LICENSE", "NONE", "UNLICENSED")
           violations = []
           for record in records:
               name = record.get("Name", "")
               raw_license = record.get("License") or ""
+              if raw_license.strip().upper() in unknown or "UNKNOWN" in raw_license.upper():
+                  try:
+                      package_metadata = metadata(name)
+                  except PackageNotFoundError:
+                      package_metadata = {}
+                  raw_license = (
+                      package_metadata.get("License-Expression")
+                      or package_metadata.get("License")
+                      or raw_license
+                  )
+              record["ResolvedLicense"] = raw_license or "UNKNOWN"
               license_name = raw_license.strip().upper()
               if name.lower() == "portable-ai-gateway":
                   continue
@@ -87,6 +100,7 @@ jobs:
                   or any(term in license_name for term in forbidden)
               ):
                   violations.append(f"{name}: {raw_license or 'UNKNOWN'}")
+          report_path.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n")
           if violations:
               raise SystemExit("Runtime license review required:\n" + "\n".join(violations))
           PY
