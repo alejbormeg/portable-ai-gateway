@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Build backend input for requirements-build.lock. Regenerate with pip-tools;
+# never edit the resolved lock or its hashes by hand.
+hatchling>=1.24
+# Required by Hatchling's PEP 660 editable builder used in CI.
+editables>=0.3

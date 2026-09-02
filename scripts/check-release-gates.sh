@@ -128,6 +128,7 @@ if git grep -n -I -E "$technical_placeholder_pattern" -- . \
   ':(exclude)docs/api.md' \
   ':(exclude)docs/deployment/gcp.md' \
   ':(exclude)docs/deployment/on-prem.md' \
+  ':(exclude)deploy/config/images.env.example' \
   ':(exclude)infra/terraform/gcp/terraform.tfvars.example' \
   ':(exclude)tests/test_config.py' > /tmp/portable-ai-gateway-release-technical-placeholders.txt; then
   printf '%s\n' 'error: unresolved placeholder in an executable release default:' >&2
@@ -203,8 +204,16 @@ if [[ ! -f infra/terraform/gcp/.terraform.lock.hcl ]]; then
 fi
 
 if grep -Eq 'sha256:(a{64}|b{64}|c{64})' deploy/config/images.env.example; then
-  printf '%s\n' 'error: release image examples still contain synthetic digest placeholders' >&2
+  printf '%s\n' 'error: dependency image examples still contain synthetic digest placeholders' >&2
   exit 1
 fi
+
+for dependency in PAG_POSTGRES_IMAGE PAG_VALKEY_IMAGE; do
+  reference="$(sed -n "s/^${dependency}=//p" deploy/config/images.env.example)"
+  [[ "$reference" =~ @sha256:[0-9a-f]{64}$ ]] || {
+    printf 'error: %s must be pinned to an immutable digest in deploy/config/images.env.example\n' "$dependency" >&2
+    exit 1
+  }
+done
 
 printf '%s gates passed for %s.\n' "$phase" "$version"
