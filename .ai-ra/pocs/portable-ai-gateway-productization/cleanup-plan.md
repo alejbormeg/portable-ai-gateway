@@ -2,7 +2,7 @@
 
 # Cleanup plan — Portable AI Gateway productization
 
-Status: `verified-no-external-resources`; local source validation created only ignored interpreter/test caches.
+Status: `verified-no-external-resources`; local source validation created only ignored interpreter/test caches and temporary validation tooling.
 
 ## Ownership and safety
 
@@ -22,6 +22,7 @@ Resolve exact names, labels, project/namespace, and creation evidence before any
 | Locally built gateway image/bundle | PoC execution | 6, optional and explicitly targeted | Exact digest/path absent or retained by decision | Format-only temporary bundle created under `mktemp` and removed; no image/release bundle created |
 | Raw synthetic result files | PoC execution | After review/retention decision | Manifest records retained or deleted state | Markdown evidence retained in repository |
 | Python `__pycache__` / pytest cache | Local source gate | Optional after evidence review | Ignored project-local cache paths | Created and intentionally retained; reproducible and non-sensitive |
+| Temporary Python virtual environment and Terraform binary/archive | CI remediation validation | Optional after evidence review | Exact `/tmp/pag-ci-venv` and `/tmp/pag-terraform-1.10.5` paths can be inspected or removed | Created under explicit approval; no repository artifact |
 
 Use the repository's final project-scoped Compose cleanup command after inspecting resolved resources. Do not use broad prune commands. Local image/dependency caches are not automatically deleted because they may be shared.
 
@@ -29,4 +30,4 @@ Use the repository's final project-scoped Compose cleanup command after inspecti
 
 Each approved GCP or OpenShift execution must append an exact inventory here before creation: provider/project/region or cluster/namespace, resource ID, labels, owner, cost center, dependencies, retention, destroy command, verification command, and final state. Terraform destroy or namespace deletion requires a fresh explicit approval and plan review.
 
-No external resource exists merely because Terraform or Helm files are present. The executed commands did not start a container, contact a cloud/cluster, publish an artifact or create a billable resource, so no external cleanup action exists for this run. Do not claim future cleanup until read-only verification succeeds; record partial failures as open cleanup actions with owner and cost exposure.
+No external resource exists merely because Terraform or Helm files are present. The executed commands did not start a container, contact a cloud/cluster, publish an artifact or create a billable resource, so no external cleanup action exists for this run. The Docker socket denied access before any Compose resource was created. Do not claim future cleanup until read-only verification succeeds; record partial failures as open cleanup actions with owner and cost exposure.

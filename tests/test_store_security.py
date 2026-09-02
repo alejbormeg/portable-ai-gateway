@@ -16,6 +16,7 @@ from portable_ai_gateway.security import ApiKeyManager, JWTVerifier
 from portable_ai_gateway.service import validate_resource_links
 from portable_ai_gateway.store import (
     POSTGRES_MUTATION_LOCK_SQL,
+    POSTGRES_SCHEMA_LOCK_SQL,
     POSTGRES_SNAPSHOT_LOCK_SQL,
     PostgresConnectionPool,
     PostgresPoolExhausted,
@@ -305,6 +306,11 @@ def test_postgres_boundaries_use_matching_transaction_scoped_advisory_locks() ->
     assert "pg_advisory_xact_lock_shared(" in POSTGRES_SNAPSHOT_LOCK_SQL
     assert "portable-ai-gateway-administrative-mutation" in POSTGRES_MUTATION_LOCK_SQL
     assert "portable-ai-gateway-administrative-mutation" in POSTGRES_SNAPSHOT_LOCK_SQL
+
+
+def test_postgres_schema_initialization_uses_a_transaction_scoped_lock() -> None:
+    assert "pg_advisory_xact_lock(" in POSTGRES_SCHEMA_LOCK_SQL
+    assert "portable-ai-gateway-schema-initialization" in POSTGRES_SCHEMA_LOCK_SQL
 
 
 def test_cloud_sql_unix_socket_uri_is_supported() -> None:

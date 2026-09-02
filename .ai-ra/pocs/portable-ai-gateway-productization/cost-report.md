@@ -8,12 +8,12 @@ Status: `inconclusive` (local source-validation phase executed)
 
 | Cost class | Measured | Estimated ceiling | Basis |
 | --- | ---: | ---: | --- |
-| External/cloud services | EUR 0 | EUR 0 | No external resource or paid inference is authorized for the local phase. |
+| External/cloud services | EUR 0 | EUR 0 | No external resource or paid inference was used. Approved package, Terraform and provider downloads created no recorded billable resource. |
 | Local compute/electricity | Not measured | Not estimated | Existing workstation; short source tests/static checks only, with no accepted benchmark window. |
 | Personnel/time | Not measured | Not included | Outside the technical PoC cost threshold. |
 | Artifact storage/registry | EUR 0 | EUR 0 | No publication or external registry push is authorized. |
 
-No billable action was executed or inferred. EUR 0 describes recorded external cost for the executed local source gate, not local electricity, personnel effort, total cost of ownership or a future deployment estimate.
+No billable action was executed or inferred. On 2026-09-02, declared Python dependencies, Terraform 1.10.5 and its provider were downloaded into temporary/local caches under explicit approval; Docker access was denied before any image pull or container creation. EUR 0 describes recorded external cost for the executed local source gate, not local electricity, personnel effort, total cost of ownership or a future deployment estimate.
 
 ## Future GCP gate
 

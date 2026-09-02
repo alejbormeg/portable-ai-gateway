@@ -78,9 +78,9 @@ existingSecret:
   name: ""
   databaseUrlKey: database-url
   cacheUrlKey: cache-url
-  apiKeyPepperKey: api-key-pepper
-  oidcHs256SecretKey: oidc-hs256-secret
-  oidcJwksJsonKey: oidc-jwks-json
+  apiKeyPepperKey: api-key-pepper # pragma: allowlist secret
+  oidcHs256SecretKey: oidc-hs256-secret # pragma: allowlist secret
+  oidcJwksJsonKey: oidc-jwks-json # pragma: allowlist secret
   optionalKeys: true
   optionalOidcKeys: true
 

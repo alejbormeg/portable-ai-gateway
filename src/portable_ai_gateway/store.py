@@ -23,6 +23,9 @@ POSTGRES_MUTATION_LOCK_SQL = (
 POSTGRES_SNAPSHOT_LOCK_SQL = (
     "SELECT pg_advisory_xact_lock_shared(hashtext('portable-ai-gateway-administrative-mutation'))"
 )
+POSTGRES_SCHEMA_LOCK_SQL = (
+    "SELECT pg_advisory_xact_lock(hashtext('portable-ai-gateway-schema-initialization'))"
+)
 
 
 class PostgresPoolExhausted(RuntimeError):
@@ -462,8 +465,9 @@ class SQLiteStore:
                 encoded[key] = value
         assignments = ", ".join(f"{key} = ?" for key in encoded)
         with self._lock:
+            # `assignments` uses an internal allowlist; all values remain bound.
             self._connection.execute(
-                f"UPDATE api_keys SET {assignments} WHERE id = ?",  # noqa: S608 - columns are allowlisted
+                f"UPDATE api_keys SET {assignments} WHERE id = ?",  # nosec B608
                 (*encoded.values(), key_id),
             )
             self._commit_if_outside_transaction()
@@ -518,8 +522,9 @@ class SQLiteStore:
                     "SELECT value FROM gateway_meta WHERE key = 'config_version'"
                 ).fetchone()
                 placeholders = ",".join("?" for _ in CONFIG_RESOURCE_KINDS)
+                # Placeholder count derives from a constant tuple.
                 rows = self._connection.execute(
-                    f"SELECT kind, payload FROM resources WHERE kind IN ({placeholders}) ORDER BY kind, id",
+                    f"SELECT kind, payload FROM resources WHERE kind IN ({placeholders}) ORDER BY kind, id",  # nosec B608
                     CONFIG_RESOURCE_KINDS,
                 ).fetchall()
                 snapshot = _configuration_snapshot(
@@ -548,13 +553,14 @@ class SQLiteStore:
                 removed_tenants = sorted(current_tenants - desired_tenants)
                 if removed_tenants:
                     placeholders = ",".join("?" for _ in removed_tenants)
+                    # Placeholder count derives from internal tenant ids.
                     self._connection.execute(
-                        f"UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) "
+                        f"UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) "  # nosec B608
                         f"WHERE tenant_id IN ({placeholders})",
                         (_iso(utc_now()), *removed_tenants),
                     )
                     self._connection.execute(
-                        f"DELETE FROM resources WHERE tenant_id IN ({placeholders})",
+                        f"DELETE FROM resources WHERE tenant_id IN ({placeholders})",  # nosec B608
                         removed_tenants,
                     )
                 for kind in CONFIG_RESOURCE_KINDS:
@@ -562,8 +568,9 @@ class SQLiteStore:
                     desired_ids = [resource.id for resource in resources]
                     if desired_ids:
                         placeholders = ",".join("?" for _ in desired_ids)
+                        # Placeholder count derives from validated resource ids.
                         self._connection.execute(
-                            f"DELETE FROM resources WHERE kind = ? AND id NOT IN ({placeholders})",
+                            f"DELETE FROM resources WHERE kind = ? AND id NOT IN ({placeholders})",  # nosec B608
                             (kind, *desired_ids),
                         )
                     else:
@@ -746,6 +753,10 @@ class PostgresStore:
 
     def initialize(self) -> None:
         with self._lock, self._connection.cursor() as cursor:
+            # Both planes can start at once against an empty database. Serialize
+            # schema setup so concurrent CREATE ... IF NOT EXISTS statements do
+            # not race on PostgreSQL catalog rows.
+            cursor.execute(POSTGRES_SCHEMA_LOCK_SQL)
             for statement in POSTGRES_SCHEMA:
                 cursor.execute(statement)
             self._commit_or_rollback()
@@ -871,7 +882,8 @@ class PostgresStore:
         values = [json.dumps(value) if key == "scopes" else value for key, value in updates.items()]
         assignments = ", ".join(f"{key} = CAST(%s AS JSONB)" if key == "scopes" else f"{key} = %s" for key in updates)
         with self._lock, self._connection.cursor() as cursor:
-            cursor.execute(f"UPDATE api_keys SET {assignments} WHERE id = %s", (*values, key_id))
+            # `assignments` uses an internal allowlist; all values remain bound.
+            cursor.execute(f"UPDATE api_keys SET {assignments} WHERE id = %s", (*values, key_id))  # nosec B608
             self._commit_if_outside_transaction()
         return self.get_api_key(key_id)
 
@@ -917,8 +929,9 @@ class PostgresStore:
                 cursor.execute("SELECT value FROM gateway_meta WHERE key = 'config_version'")
                 version_row = cursor.fetchone()
                 kinds = ",".join("%s" for _ in CONFIG_RESOURCE_KINDS)
+                # Placeholder count derives from a constant tuple.
                 cursor.execute(
-                    f"SELECT kind,payload FROM resources WHERE kind IN ({kinds}) ORDER BY kind,id",
+                    f"SELECT kind,payload FROM resources WHERE kind IN ({kinds}) ORDER BY kind,id",  # nosec B608
                     CONFIG_RESOURCE_KINDS,
                 )
                 snapshot = _configuration_snapshot(
@@ -951,13 +964,14 @@ class PostgresStore:
                 removed_tenants = sorted(current_tenants - desired_tenants)
                 if removed_tenants:
                     placeholders = ",".join("%s" for _ in removed_tenants)
+                    # Placeholder count derives from internal tenant ids.
                     cursor.execute(
-                        f"UPDATE api_keys SET revoked_at = COALESCE(revoked_at, %s) "
+                        f"UPDATE api_keys SET revoked_at = COALESCE(revoked_at, %s) "  # nosec B608
                         f"WHERE tenant_id IN ({placeholders})",
                         (now, *removed_tenants),
                     )
                     cursor.execute(
-                        f"DELETE FROM resources WHERE tenant_id IN ({placeholders})",
+                        f"DELETE FROM resources WHERE tenant_id IN ({placeholders})",  # nosec B608
                         removed_tenants,
                     )
                 for kind in CONFIG_RESOURCE_KINDS:
@@ -965,8 +979,9 @@ class PostgresStore:
                     desired_ids = [resource.id for resource in resources]
                     if desired_ids:
                         placeholders = ",".join("%s" for _ in desired_ids)
+                        # Placeholder count derives from validated resource ids.
                         cursor.execute(
-                            f"DELETE FROM resources WHERE kind = %s AND id NOT IN ({placeholders})",
+                            f"DELETE FROM resources WHERE kind = %s AND id NOT IN ({placeholders})",  # nosec B608
                             (kind, *desired_ids),
                         )
                     else:

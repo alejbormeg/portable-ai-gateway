@@ -17,7 +17,8 @@ def _parser() -> argparse.ArgumentParser:
 
     for name, default_port in (("data-plane", 8080), ("control-plane", 8081)):
         server = subcommands.add_parser(name)
-        server.add_argument("--host", default=os.getenv("PAG_HOST", "0.0.0.0"))
+        # Container ingress is configured by the deployment profile.
+        server.add_argument("--host", default=os.getenv("PAG_HOST", "0.0.0.0"))  # nosec B104
         server.add_argument("--port", type=int, default=int(os.getenv("PORT", str(default_port))))
         server.add_argument("--workers", type=int, default=int(os.getenv("PAG_WORKERS", "1")))
 

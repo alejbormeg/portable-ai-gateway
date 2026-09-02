@@ -296,7 +296,7 @@ resource "google_secret_manager_secret" "cache_ca" {
 }
 
 resource "google_secret_manager_secret_version" "cache_ca" {
-  secret      = google_secret_manager_secret.cache_ca.id
+  secret = google_secret_manager_secret.cache_ca.id
   # Trust every CA published during the documented rotation overlap window.
   secret_data = join("\n", [for certificate in google_redis_instance.gateway.server_ca_certs : certificate.cert])
 }
@@ -344,8 +344,6 @@ resource "google_secret_manager_secret_version" "gateway_config" {
 }
 
 resource "google_secret_manager_secret" "oidc_jwks" {
-  count = var.oidc_jwks_json == "" ? 0 : 1
-
   secret_id = "${var.name}-oidc-jwks"
   labels    = local.labels
   replication {
@@ -362,9 +360,7 @@ resource "google_secret_manager_secret" "oidc_jwks" {
 }
 
 resource "google_secret_manager_secret_version" "oidc_jwks" {
-  count = var.oidc_jwks_json == "" ? 0 : 1
-
-  secret      = google_secret_manager_secret.oidc_jwks[0].id
+  secret      = google_secret_manager_secret.oidc_jwks.id
   secret_data = var.oidc_jwks_json
 }
 
@@ -384,7 +380,7 @@ locals {
         google_service_account.data_plane.email,
         google_service_account.control_plane.email,
       ])
-    ) : "${item[0]}|${item[1]}" => {
+      ) : "${item[0]}|${item[1]}" => {
       secret_id = item[0]
       email     = item[1]
     }
@@ -401,13 +397,13 @@ resource "google_secret_manager_secret_iam_member" "shared" {
 }
 
 resource "google_secret_manager_secret_iam_member" "oidc_jwks" {
-  for_each = var.oidc_jwks_json == "" ? toset([]) : toset([
-    google_service_account.data_plane.email,
-    google_service_account.control_plane.email,
-  ])
+  for_each = {
+    data_plane    = google_service_account.data_plane.email
+    control_plane = google_service_account.control_plane.email
+  }
 
   project   = var.project_id
-  secret_id = google_secret_manager_secret.oidc_jwks[0].secret_id
+  secret_id = google_secret_manager_secret.oidc_jwks.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${each.value}"
 }
@@ -563,13 +559,13 @@ resource "google_cloud_run_v2_service" "data_plane" {
         }
       }
       dynamic "env" {
-        for_each = var.oidc_jwks_json == "" ? [] : [1]
+        for_each = [1]
         content {
           name = "PAG_OIDC_JWKS_JSON"
           value_source {
             secret_key_ref {
-              secret  = google_secret_manager_secret.oidc_jwks[0].secret_id
-              version = google_secret_manager_secret_version.oidc_jwks[0].version
+              secret  = google_secret_manager_secret.oidc_jwks.secret_id
+              version = google_secret_manager_secret_version.oidc_jwks.version
             }
           }
         }
@@ -754,13 +750,13 @@ resource "google_cloud_run_v2_service" "control_plane" {
         }
       }
       dynamic "env" {
-        for_each = var.oidc_jwks_json == "" ? [] : [1]
+        for_each = [1]
         content {
           name = "PAG_OIDC_JWKS_JSON"
           value_source {
             secret_key_ref {
-              secret  = google_secret_manager_secret.oidc_jwks[0].secret_id
-              version = google_secret_manager_secret_version.oidc_jwks[0].version
+              secret  = google_secret_manager_secret.oidc_jwks.secret_id
+              version = google_secret_manager_secret_version.oidc_jwks.version
             }
           }
         }

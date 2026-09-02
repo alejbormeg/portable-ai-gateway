@@ -48,7 +48,7 @@ traceability:
 metrics:
   - name: "mandatory_functional_conformance"
     threshold: "100%"
-    observed: "135/135 local Python tests passed with SQLite/in-memory stores, mocked providers and synthetic release/bundle fixtures; the required real-service and platform matrix was not executed"
+    observed: "136/136 local Python tests passed in a clean temporary Python 3.12 environment with SQLite/in-memory stores, mocked providers and synthetic release/bundle fixtures; the required real-service and platform matrix was not executed"
   - name: "negative_auth_and_tenant_isolation"
     threshold: "100% pass; 0 cross-tenant disclosures"
     observed: "Local negative scope, sensitive-tenant, cross-tenant, key-lifecycle and tenant-recreation scenarios passed; production IdP and adversarial platform tests were not executed"
@@ -72,7 +72,7 @@ metrics:
     observed: null
   - name: "cross_platform_artifact_identity"
     threshold: "one immutable image digest passes Compose, Cloud Run, Kubernetes and OpenShift restricted gates"
-    observed: "Compose and Helm/OpenShift manifests passed offline static resolution/lint only; no image digest was built or deployed"
+    observed: "Compose and Helm/OpenShift manifests passed offline static resolution/lint; Terraform 1.10.5 fmt/init/validate passed with a committed provider lock. No image digest was built or deployed."
   - name: "offline_vendor_dependency"
     threshold: "0 outbound/vendor licensing or control-plane calls during air-gapped install and run"
     observed: "A relocatable three-image bundle create/checksum/standalone-structure/Compose-resolution smoke passed without network; no runtime air-gap install ran, and source inspection found no licensor dependency"

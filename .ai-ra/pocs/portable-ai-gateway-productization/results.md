@@ -4,9 +4,9 @@
 
 Status: `inconclusive`
 
-On 2026-09-01, the integrated local source gate passed 135 Python tests plus static configuration, deployment, supply-chain-contract and air-gap-format checks. The runtime now enforces one monotonic pre-response deadline across ordered provider attempts, renews short ownership-bound concurrency leases, and uses a bounded PostgreSQL connection pool with idle health checks; the release design binds both OCI platforms, a reproducibility record, exact scanner reports, a hashed external harness and source archive, standalone PostgreSQL/Valkey archives, and a digest-specific independent review with protected-environment approval history. Publication is draft-first and resumes only when existing assets are byte-identical.
+On 2026-09-01, the integrated local source gate passed 135 Python tests plus static configuration, deployment, supply-chain-contract and air-gap-format checks. A clean-environment remediation validation on 2026-09-02 passed 136 Python tests and Terraform 1.10.5 format/init/validate. The runtime now enforces one monotonic pre-response deadline across ordered provider attempts, renews short ownership-bound concurrency leases, and uses a bounded PostgreSQL connection pool with idle health checks; the release design binds both OCI platforms, a reproducibility record, exact scanner reports, a hashed external harness and source archive, standalone PostgreSQL/Valkey archives, and a digest-specific independent review with protected-environment approval history. Publication is draft-first and resumes only when existing assets are byte-identical.
 
-No dependency/image download, container start, image build, cloud/cluster deployment, external provider call, cryptographic signing or benchmark was executed. This is therefore a locally source-tested alpha baseline, not cross-platform, production, performance, legal or artifact certification.
+The remediation validation downloaded declared Python dependencies, Terraform and its provider into temporary/local caches under explicit approval. No container start, image build, cloud/cluster deployment, external provider call, cryptographic signing or benchmark was executed. This is therefore a locally source-tested alpha baseline, not cross-platform, production, performance, legal or artifact certification.
 
 ## Executed local source gate
 
@@ -25,7 +25,7 @@ These checks are not substitutes for PostgreSQL/Valkey integration, real IdP/Ver
 
 | Metric | Threshold | Observed | Status |
 | --- | --- | --- | --- |
-| Mandatory functional conformance | 100% | 135/135 local tests; required real-service/platform matrix absent | Partial / inconclusive |
+| Mandatory functional conformance | 100% | 136/136 clean-environment local tests; required real-service/platform matrix absent | Partial / inconclusive |
 | Negative auth/tenant isolation | 100%; zero disclosure | Local negative scenarios pass; production IdP/adversarial runs absent | Partial / inconclusive |
 | Prohibited content/secret events | 0 | Audit/access-log/source canaries pass; complete logs/traces/support-bundle scan absent | Partial / inconclusive |
 | Provider switch without core change | Three adapters by configuration | Three adapters and six extension families locally exercised; external customer build absent | Partial / inconclusive |
@@ -33,7 +33,7 @@ These checks are not substitutes for PostgreSQL/Valkey integration, real IdP/Ver
 | Completed request rate | >=50 req/s, >=99% success | Not executed | Inconclusive |
 | Simultaneous streams | >=100, >=99% completion | Not executed | Inconclusive |
 | Gateway-added latency | Paired p95 <=50 ms | Not executed | Inconclusive |
-| Cross-platform digest | One digest passes every required target | Static Compose/Helm gates only; no image digest | Inconclusive |
+| Cross-platform digest | One digest passes every required target | Static Compose/Helm plus Terraform fmt/init/validate only; no image digest | Inconclusive |
 | Offline vendor dependency | Zero calls | Relocatable three-image format/checksum smoke; no runtime execution | Inconclusive |
 | License feature parity | Identical source/artifact | One source/no license paths; no real artifact comparison | Inconclusive |
 | Reproducible build | Two clean builds match both platform digests | Contract/test implemented; no builds executed | Inconclusive |
@@ -58,7 +58,7 @@ These checks are not substitutes for PostgreSQL/Valkey integration, real IdP/Ver
 
 ## Remaining release blockers
 
-- Create the GitHub repository/remote, replace repository/legal/contact placeholders and produce the initial clean commit.
+- Obtain a green GitHub Actions run for the remediation commit; replace repository/legal/contact placeholders where applicable.
 - Complete professional review of title/copyright, employer/author rights, AGPL/commercial terms, commercial contract, trademarks and third-party compatibility.
 - Generate and review hashed Python/build/test locks, Terraform provider locks, real base/dependency digests and exact third-party notices.
 - Build the real multiarch candidate, generate/scan/sign/attest its exact artifacts and execute a second clean reproducible build.

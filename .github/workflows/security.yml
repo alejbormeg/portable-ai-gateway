@@ -33,13 +33,13 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install runtime and pinned scanners
-        run: |
+        run: | # pragma: allowlist secret
           if [[ -f requirements.lock ]]; then
             python -m pip install --require-hashes --requirement requirements.lock
           else
             python -m pip install --editable '.[production]'
           fi
-          python -m pip freeze --exclude-editable > artifacts-runtime-requirements.txt
+          python -m pip freeze --exclude-editable > artifacts-runtime-requirements.txt # pragma: allowlist secret
           python - <<'PY' > artifacts-runtime-packages.txt
           from importlib.metadata import distributions
 

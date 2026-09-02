@@ -4,6 +4,18 @@
 
 Result: `pass within executed scope`; full PoC classification: `inconclusive`.
 
+## CI remediation validation — 2026-09-02
+
+The first public GitHub Actions run exposed three reproducible CI defects. They were repaired locally and the following clean-environment checks passed:
+
+- `python -m pip install --editable '.[dev,production]'` in a temporary Python 3.12 virtual environment, followed by `python -m pytest --cov=portable_ai_gateway --cov-report=term-missing --cov-report=xml`: **136 passed**. The `dev` extra now explicitly contains `pytest-asyncio`; the Vertex/production extra contains `google-auth[requests]`, required by Google ADC's requests transport.
+- Terraform `1.10.5` downloaded from HashiCorp, checked against its published SHA-256 manifest, then `terraform fmt -check -recursive`, `terraform init -backend=false -input=false`, and `terraform validate`: **passed**. The selected signed provider is recorded in `infra/terraform/gcp/.terraform.lock.hcl`.
+- The Security workflow was reproduced with its pinned Bandit tool: SAST passed after scoped suppressions for container binding and internally generated SQL placeholders. A clean production-only dependency audit passed with `cryptography 50.0.1`; the committed secret scan found zero findings, with only documented structural/chart references allowlisted.
+- The GCP module no longer derives a resource `for_each` decision from the sensitive JWKS secret; because the production profile already requires a static non-empty JWKS, its secret, bindings and Cloud Run environment references are unconditional.
+- A Compose execution was authorized and attempted, but the host denied access to `/var/run/docker.sock`; `sudo -n docker version` also required an interactive password. No container, volume, network, image or cloud resource was created by this attempt.
+
+The attempted CI run had also indicated that the data plane became unhealthy. The advisory transaction lock added around PostgreSQL schema initialization removes the likely simultaneous data/control-plane catalog-initialization race, but this remains unverified until a host with usable Docker access runs the real-service Compose gate.
+
 ## Execution identity
 
 | Field | Value |
@@ -71,6 +83,8 @@ The following completed without starting a container or contacting a registry:
 
 Terraform/OpenTofu, `actionlint`, `shellcheck`, `cosign` and `pytest-cov` were unavailable; none was downloaded. Terraform received structural review only.
 
+This statement applies to the 2026-09-01 source gate. The separate 2026-09-02 remediation validation above downloaded `pytest-cov` and Terraform 1.10.5 into temporary local paths under explicit approval; no cloud credentials, container images, artifact publication or billable resource was used.
+
 ## Relocatable air-gap format smoke
 
 A fresh temporary directory used opaque local stand-ins plus the synthetic SPDX fixture to create a three-record bundle (`gateway`, `postgres`, `valkey`). These checks passed:
@@ -116,7 +130,7 @@ fabd5cb4a5ac2c6419c2825345974b3634eba56b39f20e4de37d27d6aa45030c  tests/test_con
 
 ## What this evidence does not prove
 
-- No Docker image was built and no Compose service was started; PostgreSQL and Valkey were not integration-tested. PostgreSQL reconnection/pool behavior uses synthetic DB-API stand-ins and is not evidence of real pg8000, server or pool behavior.
+- No Docker image was built and no Compose service was started; PostgreSQL and Valkey were not integration-tested because the host denied Docker socket access. PostgreSQL reconnection/pool behavior uses synthetic DB-API stand-ins and is not evidence of real pg8000, server or pool behavior.
 - No production IdP/JWKS, Vertex/BYO endpoint, Cloud Run, Kubernetes, kind or OpenShift environment was contacted.
 - No real OCI digest, dependency lock, SBOM, vulnerability/license scan, signature, provenance or reproducible second build exists.
 - No load, 100-stream, paired-latency, 100-run quality or synthetic-cost measurement ran. Deadline and lease-renewal tests use synthetic in-process delays/cache behavior and are not evidence of provider or Valkey behavior in production.
@@ -125,4 +139,4 @@ fabd5cb4a5ac2c6419c2825345974b3634eba56b39f20e4de37d27d6aa45030c  tests/test_con
 
 ## External actions and cleanup
 
-External calls, credentials used, images pulled, resources created, deployments, publications and recorded external cost were all zero. Only project-local ignored Python caches may remain. The original proof of concept and existing GCP resources remained untouched.
+No credentials, container images, resources, deployments or publications were used. The 2026-09-02 remediation validation downloaded Python packages, Terraform and one Terraform provider into local temporary/cache paths under explicit approval; it created no billable resource and recorded external cost remains EUR 0. Only project-local ignored Python caches may remain. The original proof of concept and existing GCP resources remained untouched.

@@ -39,4 +39,4 @@ def test_benchmark_helpers_are_fail_closed_and_use_nearest_rank() -> None:
     with pytest.raises(argparse.ArgumentTypeError, match="non-loopback"):
         _validated_url("https://gateway.example/v1/chat/completions", False)
     with pytest.raises(argparse.ArgumentTypeError, match="credential-free"):
-        _validated_url("https://user:secret@gateway.example/v1/chat/completions", True)
+        _validated_url("https://user:secret@gateway.example/v1/chat/completions", True)  # pragma: allowlist secret
