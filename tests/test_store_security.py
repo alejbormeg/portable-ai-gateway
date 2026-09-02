@@ -217,6 +217,43 @@ def test_postgres_pool_lazily_borrows_returns_and_closes_connections() -> None:
     assert all(connection.closed for connection in created)
 
 
+def test_postgres_pool_supports_pg8000_style_cursors_without_context_manager() -> None:
+    class Cursor:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def execute(self, statement) -> None:
+            assert statement == "SELECT 1 AS value"
+
+        def fetchone(self):
+            return (1,)
+
+        def close(self) -> None:
+            self.closed = True
+
+    class Connection:
+        def __init__(self) -> None:
+            self.cursor_instance = Cursor()
+
+        def cursor(self) -> Cursor:
+            return self.cursor_instance
+
+        def commit(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    connection = Connection()
+    pool = PostgresConnectionPool(lambda: connection, min_size=1, max_size=1)
+
+    assert pool.acquire() is connection
+    assert connection.cursor_instance.closed is True
+
+
 def test_postgres_pool_fails_when_bounded_capacity_is_exhausted() -> None:
     class Cursor:
         def __enter__(self): return self

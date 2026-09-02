@@ -32,6 +32,23 @@ class PostgresPoolExhausted(RuntimeError):
     """No PostgreSQL connection became available within the configured bound."""
 
 
+@contextmanager
+def _cursor(connection: Any) -> Iterator[Any]:
+    """Close a DB-API cursor without requiring context-manager support.
+
+    pg8000 implements the DB-API cursor contract but its cursors are not
+    context managers.  Keeping this adapter local also works with drivers and
+    synthetic test doubles that do implement ``__enter__``/``__exit__``.
+    """
+    cursor = connection.cursor()
+    try:
+        yield cursor
+    finally:
+        close = getattr(cursor, "close", None)
+        if callable(close):
+            close()
+
+
 class PostgresConnectionPool:
     """Small synchronous DB-API pool with health-checked idle connections."""
 
@@ -65,7 +82,7 @@ class PostgresConnectionPool:
     @staticmethod
     def _is_healthy(connection: Any) -> bool:
         try:
-            with connection.cursor() as cursor:
+            with _cursor(connection) as cursor:
                 cursor.execute("SELECT 1 AS value")
                 healthy = cursor.fetchone()[0] == 1
             connection.commit()
@@ -108,6 +125,8 @@ class PostgresConnectionPool:
             if self._is_healthy(candidate):
                 return candidate
             self.release(candidate, broken=True)
+            if time.monotonic() >= deadline:
+                raise PostgresPoolExhausted("PostgreSQL pool acquire timeout")
 
     def release(self, connection: Any, *, broken: bool = False) -> None:
         if broken:
@@ -712,7 +731,7 @@ class PostgresStore:
         with self._lock:
             outermost = self._transaction_depth == 0
             if outermost:
-                with self._connection.cursor() as cursor:
+                with _cursor(self._connection) as cursor:
                     cursor.execute(POSTGRES_MUTATION_LOCK_SQL)
                 self._transaction_rollback_only = False
             self._transaction_depth += 1
@@ -752,7 +771,7 @@ class PostgresStore:
             self._commit_or_rollback()
 
     def initialize(self) -> None:
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             # Both planes can start at once against an empty database. Serialize
             # schema setup so concurrent CREATE ... IF NOT EXISTS statements do
             # not race on PostgreSQL catalog rows.
@@ -770,7 +789,7 @@ class PostgresStore:
                 return self._ping_once()
 
     def _ping_once(self) -> bool:
-        with self._connection.cursor() as cursor:
+        with _cursor(self._connection) as cursor:
             cursor.execute("SELECT 1 AS value")
             ready = cursor.fetchone()[0] == 1
             self._finish_read_if_outside_transaction()
@@ -786,14 +805,14 @@ class PostgresStore:
             sql += " AND tenant_id = %s"
             params.append(tenant_id)
         sql += " ORDER BY id"
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute(sql, params)
             result = [_json_object(row[0]) for row in cursor.fetchall()]
             self._finish_read_if_outside_transaction()
             return result
 
     def get_resource(self, kind: str, resource_id: str) -> dict[str, Any] | None:
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute("SELECT payload FROM resources WHERE kind = %s AND id = %s", (kind, resource_id))
             row = cursor.fetchone()
             result = _json_object(row[0]) if row else None
@@ -803,7 +822,7 @@ class PostgresStore:
     def put_resource(self, kind: str, resource: Resource | dict[str, Any]) -> dict[str, Any]:
         payload = resource.model_dump(mode="json") if isinstance(resource, Resource) else dict(resource)
         now = utc_now()
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute(
                 """INSERT INTO resources(kind,id,tenant_id,payload,created_at,updated_at)
                    VALUES (%s,%s,%s,CAST(%s AS JSONB),%s,%s)
@@ -816,7 +835,7 @@ class PostgresStore:
         return payload
 
     def delete_resource(self, kind: str, resource_id: str) -> bool:
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute("DELETE FROM resources WHERE kind = %s AND id = %s", (kind, resource_id))
             deleted = cursor.rowcount > 0
             if deleted:
@@ -826,7 +845,7 @@ class PostgresStore:
 
     def delete_tenant(self, tenant_id: str) -> bool:
         """Delete a tenant atomically, remove its configuration, and revoke its keys."""
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             try:
                 cursor.execute("DELETE FROM resources WHERE kind = 'tenants' AND id = %s", (tenant_id,))
                 deleted = cursor.rowcount > 0
@@ -845,7 +864,7 @@ class PostgresStore:
                 raise
 
     def put_api_key(self, record: dict[str, Any]) -> dict[str, Any]:
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute(
                 """INSERT INTO api_keys(id,tenant_id,name,key_hash,scopes,expires_at,revoked_at,created_at,last_used_at)
                    VALUES (%s,%s,%s,%s,CAST(%s AS JSONB),%s,%s,%s,%s)""",
@@ -856,7 +875,7 @@ class PostgresStore:
         return self.get_api_key(record["id"]) or {}
 
     def get_api_key(self, key_id: str) -> dict[str, Any] | None:
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute("SELECT * FROM api_keys WHERE id = %s", (key_id,))
             row = cursor.fetchone()
             result = _postgres_key_row(row) if row else None
@@ -868,7 +887,7 @@ class PostgresStore:
         if tenant_id is not None:
             sql, params = sql + " WHERE tenant_id = %s", [tenant_id]
         sql += " ORDER BY id"
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute(sql, params)
             result = [_postgres_key_row(row) for row in cursor.fetchall()]
             self._finish_read_if_outside_transaction()
@@ -881,7 +900,7 @@ class PostgresStore:
             return self.get_api_key(key_id)
         values = [json.dumps(value) if key == "scopes" else value for key, value in updates.items()]
         assignments = ", ".join(f"{key} = CAST(%s AS JSONB)" if key == "scopes" else f"{key} = %s" for key in updates)
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             # `assignments` uses an internal allowlist; all values remain bound.
             cursor.execute(f"UPDATE api_keys SET {assignments} WHERE id = %s", (*values, key_id))  # nosec B608
             self._commit_if_outside_transaction()
@@ -891,7 +910,7 @@ class PostgresStore:
         payload = event.model_dump(mode="json")
         if AuditEvent.FORBIDDEN_CONTENT_FIELDS.intersection(payload):
             raise ValueError("audit payload contains a forbidden content field")
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute(
                 "INSERT INTO audit_events(id,timestamp,request_id,actor,tenant_id,payload) VALUES (%s,%s,%s,%s,%s,CAST(%s AS JSONB))",
                 (event.id, event.timestamp, event.request_id, event.actor, event.tenant_id, json.dumps(payload)),
@@ -905,14 +924,14 @@ class PostgresStore:
             sql, params = sql + " WHERE tenant_id = %s", [tenant_id]
         sql += " ORDER BY timestamp DESC LIMIT %s"
         params.append(limit)
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute(sql, params)
             result = [_json_object(row[0]) for row in cursor.fetchall()]
             self._finish_read_if_outside_transaction()
             return result
 
     def get_config_version(self) -> str | None:
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             cursor.execute("SELECT value FROM gateway_meta WHERE key = 'config_version'")
             row = cursor.fetchone()
             result = str(row[0]) if row else None
@@ -921,7 +940,7 @@ class PostgresStore:
 
     def configuration_snapshot(self) -> ConfigurationSnapshot:
         """Read a revision under a shared advisory transaction lock."""
-        with self._lock, self._connection.cursor() as cursor:
+        with self._lock, _cursor(self._connection) as cursor:
             owns_transaction = self._transaction_depth == 0
             try:
                 if owns_transaction:
@@ -956,7 +975,7 @@ class PostgresStore:
 
     def reconcile_configuration(self, document: ConfigurationDocument) -> None:
         with self.mutation_transaction():
-            with self._lock, self._connection.cursor() as cursor:
+            with self._lock, _cursor(self._connection) as cursor:
                 now = utc_now()
                 desired_tenants = {tenant.id for tenant in document.spec.tenants}
                 cursor.execute("SELECT id FROM resources WHERE kind = 'tenants'")
