@@ -20,7 +20,7 @@ docker compose config --quiet
 docker compose up --build
 ```
 
-The data plane listens on `http://127.0.0.1:8080` and the control plane on `http://127.0.0.1:8081`. Compose binds both explicitly to loopback by default. Anonymous development mode grants a synthetic wildcard identity only on data-plane authentication; the control plane still requires its configured administrator OIDC token. `PAG_BIND_ADDRESS` exists for deliberate on-prem exposure, but it must never be changed to a non-loopback address while anonymous mode is enabled.
+The data plane listens on `http://127.0.0.1:8080` and the control plane on `http://127.0.0.1:8081`. Compose binds both explicitly to loopback by default. The gateways join a host-access bridge because current Docker Engine versions do not publish ports for containers attached exclusively to an internal network; PostgreSQL and Valkey remain exclusively on the internal backend. This bridge is not an outbound firewall, although the mock profile makes no external provider call. Anonymous development mode grants a synthetic wildcard identity only on data-plane authentication; the control plane still requires its configured administrator OIDC token. `PAG_BIND_ADDRESS` exists for deliberate on-prem exposure, but it must never be changed to a non-loopback address while anonymous mode is enabled.
 
 From another terminal:
 

@@ -4,7 +4,7 @@
 
 Status: `inconclusive`
 
-On 2026-09-01, the integrated local source gate passed 135 Python tests plus static configuration, deployment, supply-chain-contract and air-gap-format checks. A clean-environment remediation validation on 2026-09-02 passed 136 Python tests and Terraform 1.10.5 format/init/validate. The runtime now enforces one monotonic pre-response deadline across ordered provider attempts, renews short ownership-bound concurrency leases, and uses a bounded PostgreSQL connection pool with idle health checks; the release design binds both OCI platforms, a reproducibility record, exact scanner reports, a hashed external harness and source archive, standalone PostgreSQL/Valkey archives, and a digest-specific independent review with protected-environment approval history. Publication is draft-first and resumes only when existing assets are byte-identical.
+On 2026-09-01, the integrated local source gate passed 135 Python tests plus static configuration, deployment, supply-chain-contract and air-gap-format checks. A clean-environment remediation validation on 2026-09-02 passed 136 Python tests and Terraform 1.10.5 format/init/validate. A later GitHub run at commit `167a3fd` passed 137 tests and proved that PostgreSQL, Valkey and both gateway processes start healthy; it then exposed that current Docker Engine omits host port mappings for containers attached exclusively to an internal bridge. The corrected topology and its regression tests now pass 141 local tests, but require a fresh GitHub run. The runtime now enforces one monotonic pre-response deadline across ordered provider attempts, renews short ownership-bound concurrency leases, and uses a bounded PostgreSQL connection pool with idle health checks; the release design binds both OCI platforms, a reproducibility record, exact scanner reports, a hashed external harness and source archive, standalone PostgreSQL/Valkey archives, and a digest-specific independent review with protected-environment approval history. Publication is draft-first and resumes only when existing assets are byte-identical.
 
 The remediation validation downloaded declared Python dependencies, Terraform and its provider into temporary/local caches under explicit approval. No container start, image build, cloud/cluster deployment, external provider call, cryptographic signing or benchmark was executed. This is therefore a locally source-tested alpha baseline, not cross-platform, production, performance, legal or artifact certification.
 
@@ -19,13 +19,13 @@ The exact commands, versions, counts, checksums and limitations are captured in 
 - conservative tools/structured-output/multimodal capability filtering for initial and fallback targets;
 - release evidence, multiarch signing/digest gates, draft publication invariants and relocatable standalone air-gap structure.
 
-These checks are not substitutes for PostgreSQL/Valkey integration, real IdP/Vertex/BYO interoperability, OCI build/scanning/signing, deployed platform conformance or load evidence.
+The GitHub startup gate now provides limited real PostgreSQL/Valkey connectivity and readiness evidence. It does not yet prove the public mock request contract after the network-topology correction, concurrent/failure database behavior, real IdP/Vertex/BYO interoperability, deployed platform conformance or load behavior.
 
 ## Metrics
 
 | Metric | Threshold | Observed | Status |
 | --- | --- | --- | --- |
-| Mandatory functional conformance | 100% | 136/136 clean-environment local tests; required real-service/platform matrix absent | Partial / inconclusive |
+| Mandatory functional conformance | 100% | 137/137 tests passed on GitHub for `167a3fd`; PostgreSQL, Valkey and both gateways became healthy, but host access failed due to the internal-only network. Corrected source passes 141/141 locally; rerun pending | Partial / inconclusive |
 | Negative auth/tenant isolation | 100%; zero disclosure | Local negative scenarios pass; production IdP/adversarial runs absent | Partial / inconclusive |
 | Prohibited content/secret events | 0 | Audit/access-log/source canaries pass; complete logs/traces/support-bundle scan absent | Partial / inconclusive |
 | Provider switch without core change | Three adapters by configuration | Three adapters and six extension families locally exercised; external customer build absent | Partial / inconclusive |
@@ -53,6 +53,7 @@ These checks are not substitutes for PostgreSQL/Valkey integration, real IdP/Ver
 - Concurrency leases have a short ownership-bound renewal; an unconfirmed renewal closes a live stream before its next emitted chunk.
 - PostgreSQL readiness safely replaces one failed idle DB-API connection and never retries an in-flight transaction.
 - PostgreSQL uses a bounded 1–5 connection pg8000 pool per process; exhausted acquisition fails instead of creating unbounded connections.
+- Compose gives only the gateway processes a host-access bridge so current Docker Engine can publish their loopback ports; PostgreSQL and Valkey remain backend-only, and the topology is regression-tested.
 - Air-gap Compose is image-only, relocatable and structurally requires gateway/PostgreSQL/Valkey for the official standalone bundle.
 - GitHub release publication uses a resumable draft, verifies every existing asset byte-for-byte and never clobbers a different asset.
 
@@ -62,7 +63,7 @@ These checks are not substitutes for PostgreSQL/Valkey integration, real IdP/Ver
 - Complete professional review of title/copyright, employer/author rights, AGPL/commercial terms, commercial contract, trademarks and third-party compatibility.
 - Generate and review hashed Python/build/test locks, Terraform provider locks, real base/dependency digests and exact third-party notices.
 - Build the real multiarch candidate, generate/scan/sign/attest its exact artifacts and execute a second clean reproducible build.
-- Run Compose with PostgreSQL/Valkey, production OIDC/JWKS, Vertex and BYO integration.
+- Obtain a green corrected Compose public-contract run, then extend real PostgreSQL/Valkey coverage to concurrency and failure recovery plus production OIDC/JWKS, Vertex and BYO integration.
 - Execute the same digest on Cloud Run, Kubernetes/kind, OpenShift restricted and disconnected runtime, including failure, isolation, backup/restore and zero-egress scenarios.
 - Execute 50 req/s, 100 streams, <=50 ms gateway-added p95 and approved quality/cost repetitions.
 - Configure and execute the protected independent-review environment, bind the human approval history to the final commit/digest, and classify the full PoC as `supported` before tagging.

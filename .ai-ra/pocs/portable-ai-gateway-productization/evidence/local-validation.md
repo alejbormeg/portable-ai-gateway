@@ -16,6 +16,28 @@ The first public GitHub Actions run exposed three reproducible CI defects. They 
 
 The attempted CI run had also indicated that the data plane became unhealthy. The advisory transaction lock added around PostgreSQL schema initialization removes the likely simultaneous data/control-plane catalog-initialization race, but this remains unverified until a host with usable Docker access runs the real-service Compose gate.
 
+## GitHub Compose diagnosis — 2026-09-02
+
+The user supplied the complete GitHub Actions log archive for commit
+`167a3fd5a89f8016ec1f3b447662adf1afb6786a`; its SHA-256 is
+`efce0336b3593758b105eaf2c3efb9bc473916dda26edba249624cfb9291207f`.
+The evidence shows:
+
+- the Python job passed **137/137** tests with 80% measured line/branch coverage;
+- PostgreSQL 17.6, Valkey 8.0.3 and both gateway processes started, and all four container health checks became healthy;
+- the pg8000 cursor correction therefore closed the prior startup failure;
+- the public contract failed before its first assertion because Docker created no host port mapping for either gateway, despite the requested Compose `ports` entries;
+- both gateway processes were listening internally on `0.0.0.0:8080` and `0.0.0.0:8081`, while `docker compose ps` reported an empty `PORTS` column.
+
+The failing topology attached the gateways exclusively to an `internal` bridge.
+Current Docker Engine does not publish host ports for that topology. The
+remediation attaches only the two gateway services to an additional normal
+`host-access` bridge, keeps PostgreSQL and Valkey exclusively on the internal
+backend, and adds an executable topology regression test. The remediated source
+passes **141/141** local tests and resolves all four Compose base/override
+configurations. A new GitHub run is still required to accept the public mock
+contract; no local container was started while applying this remediation.
+
 ## Execution identity
 
 | Field | Value |

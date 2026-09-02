@@ -162,7 +162,7 @@ With approval, use the same values in `helm upgrade --install`. The override ena
 
 ## Docker Compose with BYO/Vertex egress
 
-The base Compose network is internal for the mock quickstart. External provider access is an explicit overlay that adds a second egress-capable network only to the data plane; PostgreSQL, Valkey and the control plane remain on the internal backend, and the provider credential is injected only into the data plane:
+The base Compose topology keeps PostgreSQL and Valkey exclusively on an internal backend. Both gateway processes also join a normal bridge so Docker can publish their loopback ports; therefore Compose alone is not an outbound firewall. The provider overlay mounts the reviewed on-prem configuration, injects the provider credential only into the data plane, and adds a provider-specific network only to that plane:
 
 ```sh
 # SPDX-License-Identifier: AGPL-3.0-only

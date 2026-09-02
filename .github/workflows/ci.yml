@@ -107,6 +107,8 @@ jobs:
         run: docker compose up --build --wait --wait-timeout 240
       - name: Exercise the public mock contract
         run: |
+          test "$(docker compose port data-plane 8080)" = "127.0.0.1:8080"
+          test "$(docker compose port control-plane 8081)" = "127.0.0.1:8081"
           curl --fail --silent --show-error http://127.0.0.1:8080/health | jq -e '.status == "ok"'
           curl --fail --silent --show-error http://127.0.0.1:8080/ready | jq -e '.status == "ready"'
           curl --fail --silent --show-error http://127.0.0.1:8080/v1/models | jq -e '.data | length == 1'

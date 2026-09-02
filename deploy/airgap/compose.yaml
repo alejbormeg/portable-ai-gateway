@@ -33,6 +33,10 @@ x-gateway-common: &gateway-common
       condition: service_healthy
   networks:
     - backend
+    # Required for loopback port publication on current Docker Engine. In a
+    # real air-gapped installation, external isolation is enforced by the
+    # disconnected host/network boundary as well as application policy.
+    - host-access
 
 services:
   data-plane:
@@ -114,6 +118,7 @@ services:
 networks:
   backend:
     internal: true
+  host-access: {}
 
 volumes:
   postgres-data:

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Opt-in override for Vertex AI or a BYO provider reachable outside the Compose
-# project. The base Compose topology remains network-isolated for mock testing.
+# Opt-in configuration override for Vertex AI or a BYO provider reachable
+# outside the Compose project. The base mock performs no provider network call;
+# host-level policy is required when outbound network denial is mandatory.
 services:
   data-plane:
     environment:
@@ -10,6 +11,7 @@ services:
       - ./deploy/config/on-prem.yaml:/etc/portable-ai-gateway/config.yaml:ro
     networks:
       - backend
+      - host-access
       - provider-egress
   control-plane:
     environment:
@@ -18,6 +20,6 @@ services:
       - ./deploy/config/on-prem.yaml:/etc/portable-ai-gateway/config.yaml:ro
 
 networks:
-  # Only the data plane joins this network. PostgreSQL, Valkey and the
-  # control plane remain isolated on the internal backend network.
+  # Only the data plane joins this provider-specific network. PostgreSQL and
+  # Valkey remain exclusively on the internal backend network.
   provider-egress: {}

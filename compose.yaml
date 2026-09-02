@@ -33,6 +33,10 @@ x-gateway-common: &gateway-common
       condition: service_healthy
   networks:
     - backend
+    # Docker Engine 29 does not publish host ports for containers attached
+    # exclusively to an internal network. This second bridge preserves the
+    # loopback quickstart while data services remain backend-only.
+    - host-access
 
 services:
   data-plane:
@@ -124,6 +128,7 @@ services:
 networks:
   backend:
     internal: true
+  host-access: {}
 
 volumes:
   postgres-data:

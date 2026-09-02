@@ -48,7 +48,7 @@ traceability:
 metrics:
   - name: "mandatory_functional_conformance"
     threshold: "100%"
-    observed: "136/136 local Python tests passed in a clean temporary Python 3.12 environment with SQLite/in-memory stores, mocked providers and synthetic release/bundle fixtures; the required real-service and platform matrix was not executed"
+    observed: "137/137 tests passed on GitHub for commit 167a3fd and PostgreSQL, Valkey and both gateways became healthy; public host access then failed because Docker omitted port mappings for the internal-only network. The corrected dual-network topology passes 141/141 locally and awaits a new GitHub run; the remaining real-service/platform matrix was not executed"
   - name: "negative_auth_and_tenant_isolation"
     threshold: "100% pass; 0 cross-tenant disclosures"
     observed: "Local negative scope, sensitive-tenant, cross-tenant, key-lifecycle and tenant-recreation scenarios passed; production IdP and adversarial platform tests were not executed"

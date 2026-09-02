@@ -9,6 +9,7 @@ services:
       - ../config/on-prem.yaml:/etc/portable-ai-gateway/config.yaml:ro
     networks:
       - backend
+      - host-access
       - provider-egress
   control-plane:
     environment:
