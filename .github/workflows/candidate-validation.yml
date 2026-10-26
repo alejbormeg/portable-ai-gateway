@@ -91,7 +91,7 @@ jobs:
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install Cosign
-        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Verify signed candidate manifest and files
         id: verify
         env:
@@ -298,7 +298,7 @@ jobs:
             --candidate-artifact-digest "${{ needs.resolve-candidate.outputs.artifact_digest }}" \
             --harness-sha256 "${{ steps.harness.outputs.sha256 }}"
       - name: Install Cosign
-        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign and checksum executed evidence
         run: |
           cosign sign-blob --yes \
@@ -397,7 +397,7 @@ jobs:
           path: review-input/evidence
           merge-multiple: false
       - name: Install Cosign
-        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Reverify evidence presented to the independent reviewers
         run: |
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/candidate-validation.yml@refs/heads/main"
@@ -547,7 +547,7 @@ jobs:
           name: independent-review-${{ inputs.candidate_commit }}
           path: accepted/review
       - name: Install Cosign
-        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Reverify matrix evidence and build its immutable index
         run: |
           mkdir -p accepted/receipt
