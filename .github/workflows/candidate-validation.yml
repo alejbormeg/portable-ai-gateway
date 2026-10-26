@@ -311,7 +311,7 @@ jobs:
               | xargs -0 sha256sum > files.sha256
           )
       - name: Upload target evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: validation-${{ matrix.target }}-${{ inputs.candidate_commit }}
           path: validation
@@ -502,7 +502,7 @@ jobs:
           echo "sha256=$(sha256sum review/independent-review.json | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Upload immutable independent review
         id: artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: independent-review-${{ inputs.candidate_commit }}
           path: review
@@ -727,7 +727,7 @@ jobs:
           echo "sha256=sha256:$(sha256sum accepted/receipt/dossier.json | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Upload immutable accepted dossier
         id: artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: accepted-release-${{ inputs.candidate_commit }}
           path: accepted
