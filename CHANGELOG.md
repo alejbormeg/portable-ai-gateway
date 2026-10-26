@@ -12,6 +12,10 @@ All notable changes will be recorded here. The project intends to use Semantic V
 - Exact multi-platform candidate/SBOM evidence, reproducible-build and external-harness contracts, standalone three-image air-gap packaging, and resumable byte-verified release publication.
 - Conservative request-capability detection, atomic first-party state/audit mutations, production CLI OIDC identity, and fail-closed malformed-JWKS handling.
 
+### Security
+
+- Upgrade locked `urllib3` to 2.8.0 (PYSEC-2026-4175, PYSEC-2026-4176, PYSEC-2026-4177) and `certifi` to 2026.10.19 (PYSEC-2026-4320).
+
 ### Validation status
 
-- The local source gate records 120 passing tests plus static Compose/Helm/configuration, workflow/shell contracts and a relocatable format-only air-gap check. Real-service, deployment, offline-runtime, exact-artifact, reproducibility and performance evidence remains inconclusive; see `.ai-ra/pocs/portable-ai-gateway-productization/results.md`.
+- The local source gate records 142 passing tests plus static Compose/Helm/configuration, workflow/shell contracts and a relocatable format-only air-gap check. Real-service, deployment, offline-runtime, exact-artifact, reproducibility and performance evidence remains inconclusive; see `.ai-ra/pocs/portable-ai-gateway-productization/results.md`.
