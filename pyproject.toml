@@ -25,11 +25,11 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["pg8000>=1.31,<2"]
-redis = ["redis>=5,<7"]
+redis = ["redis>=5,<9"]
 vertex = ["google-auth[requests]>=2.38,<3"]
 production = [
   "pg8000>=1.31,<2",
-  "redis>=5,<7",
+  "redis>=5,<9",
   "google-auth[requests]>=2.38,<3",
   "cryptography>=50,<51",
 ]
