@@ -95,6 +95,6 @@ Security reports must use the private process in [SECURITY.md](SECURITY.md), not
 
 ## License
 
-Unless a file says otherwise, this repository is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). A commercial alternative for the same code may be available from the copyright holder. The copyright-holder identity is an unresolved publication gate and is deliberately not invented in this repository.
+Unless a file says otherwise, this repository is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). Copyright (C) 2026 Alejandro Borrego Megías. A commercial alternative for the same code may be available from the copyright holder; see [LICENSING.md](LICENSING.md).
 
 Nothing in this repository is legal advice. Complete the gates in [the release guide](docs/release.md) with qualified counsel before public distribution or commercial contracting.

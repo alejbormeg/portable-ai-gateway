@@ -6,4 +6,4 @@
 
 Community support has no response-time target, resolution commitment, availability objective, maintenance window, backward-compatibility guarantee, or SLA. The documented 99.9% figure is a future design objective, not a current promise.
 
-Commercial licensing, support, LTS maintenance, certified builds, CVE handling, onboarding, implementation, and training may be offered only through a separate signed agreement. `{{LICENSING_CONTACT}}` must be replaced before public commercial solicitation. No support entitlement arises from using the AGPL build or from this document.
+Commercial licensing, support, LTS maintenance, certified builds, CVE handling, onboarding, implementation, and training may be offered only through a separate signed agreement. Contact <alejbormeg@gmail.com> for commercial licensing. No support entitlement arises from using the AGPL build or from this document.

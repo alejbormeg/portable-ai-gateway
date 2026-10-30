@@ -12,6 +12,10 @@ All notable changes will be recorded here. The project intends to use Semantic V
 - Exact multi-platform candidate/SBOM evidence, reproducible-build and external-harness contracts, standalone three-image air-gap packaging, and resumable byte-verified release publication.
 - Conservative request-capability detection, atomic first-party state/audit mutations, production CLI OIDC identity, and fail-closed malformed-JWKS handling.
 
+### Changed
+
+- Name Alejandro Borrego Megías as copyright holder and project steward, and resolve the licensing, security, conduct and trademark contact placeholders.
+
 ### Security
 
 - Upgrade locked `urllib3` to 2.8.0 (PYSEC-2026-4175, PYSEC-2026-4176, PYSEC-2026-4177) and `certifi` to 2026.10.19 (PYSEC-2026-4320).

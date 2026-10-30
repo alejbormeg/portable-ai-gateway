@@ -46,11 +46,8 @@ The dual-license offer applies only to code for which the project has the necess
 
 ## Publication gate
 
-`{{COPYRIGHT_HOLDER}}` is a deliberate unresolved variable. Before the first public release, the release steward must:
+The copyright holder is Alejandro Borrego Megías. Licensing, security, and conduct contact: <alejbormeg@gmail.com>. Before the first public release, the release steward must:
 
-- establish the correct personal legal name and contact details for the copyright holder;
-- confirm authorship and any employer, client, contractor, or prior-project rights with qualified counsel;
-- replace every `{{COPYRIGHT_HOLDER}}`, `{{LICENSING_CONTACT}}`, `{{SECURITY_CONTACT}}`, `{{CODE_OF_CONDUCT_CONTACT}}`, and `{{TRADEMARK_OWNER}}` placeholder;
 - obtain legal approval for the AGPL/commercial dual-license structure and commercial agreement;
 - generate and review dependency-license and SBOM evidence for the exact release artifact.
 

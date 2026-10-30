@@ -2,7 +2,7 @@
 
 # Governance
 
-Portable AI Gateway is initially a steward-led project. `{{COPYRIGHT_HOLDER}}` is the provisional project steward and sole commercial licensor, subject to the ownership review required before publication. The placeholder deliberately avoids asserting an unverified identity.
+Portable AI Gateway is initially a steward-led project. Alejandro Borrego Megías (<alejbormeg@gmail.com>) is the project steward, copyright holder and sole commercial licensor.
 
 The steward decides releases, architecture, security embargoes, roadmap, trademarks, compatibility policy, and commercial licensing. Decisions affecting public interfaces should be recorded in issues or architecture documentation with rationale, alternatives, compatibility impact, and evidence. Security-sensitive details may remain private until disclosure is safe.
 

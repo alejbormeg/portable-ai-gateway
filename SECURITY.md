@@ -8,7 +8,7 @@ No version is currently declared production-ready. During the `v0.1.0-alpha` cyc
 
 ## Report a vulnerability privately
 
-Use GitHub's **Report a vulnerability** / private security advisory flow for this repository. Do not open a public issue for a suspected vulnerability. If private advisories are not enabled, stop publication until `{{SECURITY_CONTACT}}` has been replaced with a monitored private address and this document has been updated.
+Use GitHub's **Report a vulnerability** / private security advisory flow for this repository. Do not open a public issue for a suspected vulnerability. If that flow is unavailable, email <alejbormeg@gmail.com> with a subject starting with `[security]`.
 
 Include the affected version or image digest, deployment profile, impact, prerequisites, sanitized reproduction, and any proposed mitigation. Remove credentials, prompts, responses, personal data, customer identifiers, private endpoint names, and proprietary model output.
 
