@@ -22,6 +22,26 @@ The same source and OCI image are offered under `AGPL-3.0-only` and, by separate
 
 This is a target contract for the alpha. A capability is not considered validated merely because it appears in this list. Follow [the evidence record](.ai-ra/pocs/portable-ai-gateway-productization/results.md) for executed results.
 
+## How it fits together
+
+```mermaid
+flowchart LR
+    client[Client app] -->|TLS + API key| dp[Data plane]
+    admin[Administrator<br/>OIDC] --> cp[Control plane]
+    git[Git desired state<br/>CLI apply/export] --> cp
+    cp <--> pg[(PostgreSQL<br/>source of truth)]
+    dp --> pg
+    dp <--> cache[(Valkey<br/>cache and rate limits)]
+    dp -->|ordered route,<br/>fallback before first byte| providers
+    subgraph providers[Providers]
+        vertex[Vertex AI]
+        compat[OpenAI-compatible endpoint]
+        mock[Deterministic mock]
+    end
+```
+
+One OCI image runs as `data-plane`, `control-plane` or `cli`. See [Architecture and data flow](docs/architecture.md) for the request flow and failure rules.
+
 ## Start locally
 
 The development profile uses synthetic configuration and the mock provider. It requires no cloud credentials and performs no external model call.
